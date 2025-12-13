@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Misc utilities and types */
+ 
+ 
 use crate::platform::*;
 use crate::wayland_gen::WlShmFormat;
 use core::num::NonZeroU32;
@@ -11,9 +11,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::str::FromStr;
 
-/** Like `format!`, but prepends file and line number.
- *
- * Example: `tag!("Failed to X: {} {}", arg1, arg2)` */
+ 
 #[macro_export]
 macro_rules! tag {
     ($x:tt) => {
@@ -24,32 +22,7 @@ macro_rules! tag {
     };
 }
 
-/* Connection header constants. The original header layout is:
- *
- * 0: set iff reconnectable
- * 1: set iff update for reconnectable connection
- * 2: no dmabuf support (can be ignored as we lazily initialize)
- * 3-6: ignored
- * 7: fixed to 1
- * 8-10: compression type
- * 11-13: video type
- * 14-15: ignored
- * 16-30: version field, original Waypipe only accepts 0x1
- * 31: fixed to 0
- *
- * Waypipe's protocol does not use any interesting features early on;
- * the application side always starts by sending a Protocol-type message.
- *
- * To allow for a "silent" version upgrade, where a new version is
- * only used if acknowledged, the version field will now be interpreted as
- * follows:
- *
- * 3-6: lower bits of version
- * 16-23: upper bits of version
- *
- * All versions from 16 (=1) to 31 to should be able to interoperate
- * with original Waypipe.
- */
+ 
 pub const MIN_PROTOCOL_VERSION: u32 = 0x10;
 pub const WAYPIPE_PROTOCOL_VERSION: u32 = 0x11;
 pub const CONN_FIXED_BIT: u32 = 0x1 << 7;
@@ -69,65 +42,49 @@ pub const CONN_AV1_VIDEO: u32 = 0x4 << 11;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum WmsgType {
-    /** Send over a set of Wayland protocol messages. Preceding messages
-     * must create or update file descriptors and inject file descriptors
-     * to the queue. */
-    Protocol = 0, // header uint32_t, then protocol messages
-    /** Inject file descriptors into the receiver's buffer, for use by the
-     * protocol parser. */
-    InjectRIDs = 1, // header uint32_t, then fds
-    /** Create a new shared memory file of the given size.
-     * Format: \ref wmsg_open_file */
+     
+    Protocol = 0,  
+     
+    InjectRIDs = 1,  
+     
     OpenFile = 2,
-    /** Provide a new (larger) size for the file buffer.
-     * Format: \ref wmsg_open_file */
+     
     ExtendFile = 3,
-    /** Create a new DMABUF with the given size and \ref dmabuf_slice_data.
-     * Format: \ref wmsg_open_dmabuf */
+     
     OpenDMABUF = 4,
-    /** Fill the region of the file with the folllowing data. The data
-     * should be compressed according to the global compression option.
-     * Format: \ref wmsg_buffer_fill */
+     
     BufferFill = 5,
-    /** Apply a diff to the file. The diff contents may be compressed.
-     * Format: \ref wmsg_buffer_diff */
+     
     BufferDiff = 6,
-    /** Create a new pipe, with the given remote R/W status */
-    OpenIRPipe = 7, // wmsg_basic
-    OpenIWPipe = 8, // wmsg_basic
-    OpenRWPipe = 9, // wmsg_basic
-    /** Transfer data to the pipe */
-    PipeTransfer = 10, // wmsg_basic
-    /** Shutdown the read end of the pipe that waypipe uses. */
-    PipeShutdownR = 11, // wmsg_basic
-    /** Shutdown the write end of the pipe that waypipe uses. */
-    PipeShutdownW = 12, // wmsg_basic
-    /** Create a DMABUF (with following data parameters) that will be used
-     * to produce/consume video frames. Format: \ref wmsg_open_dmabuf.
-     * Deprecated and may be disabled/removed in the future. */
+     
+    OpenIRPipe = 7,  
+    OpenIWPipe = 8,  
+    OpenRWPipe = 9,  
+     
+    PipeTransfer = 10,  
+     
+    PipeShutdownR = 11,  
+     
+    PipeShutdownW = 12,  
+     
     OpenDMAVidSrc = 13,
     OpenDMAVidDst = 14,
-    /** Send a packet of video data to the destination */
-    SendDMAVidPacket = 15, // wmsg_basic
-    /** Acknowledge that a given number of messages has been received, so
-     * that the sender of those messages no longer needs to store them
-     * for replaying in case of reconnection. Format: \ref wmsg_ack */
+     
+    SendDMAVidPacket = 15,  
+     
     AckNblocks = 16,
-    /** When restarting a connection, indicate the number of the message
-     * which will be sent next. Format: \ref wmsg_restart */
-    Restart = 17, // wmsg_restart
-    /** When the remote program is closing. Format: only the header */
+     
+    Restart = 17,  
+     
     Close = 18,
-    /** Create a DMABUF (with following data parameters) that will be used
-     * to produce/consume video frames. Format: \ref wmsg_open_dmavid */
+     
     OpenDMAVidSrcV2 = 19,
     OpenDMAVidDstV2 = 20,
-    /* Create a DRM syncobj timeline semaphore. Format: header, u64-le initial point */
+     
     OpenTimeline = 21,
-    /* Signal the indicated DRM syncobj timeline semaphore.  Format: header, u64-le initial point. */
+     
     SignalTimeline = 22,
-    /* Sent as the first message from the client to reveal the negotiated wire protocol
-     * version. Format: header, u32 version field */
+     
     Version = 23,
 }
 
@@ -158,7 +115,7 @@ pub fn split_interval(lo: u32, hi: u32, nparts: u32, index: u32) -> u32 {
 pub fn ceildiv(v: u32, u: u32) -> u32 {
     v.div_ceil(u)
 }
-/* Split u64 into high (32:63) and low (0:31) parts */
+ 
 pub fn split_u64(x: u64) -> (u32, u32) {
     ((x >> 32) as u32, x as u32)
 }
@@ -170,7 +127,7 @@ pub fn build_wmsg_header(typ: WmsgType, len: usize) -> u32 {
     u32::try_from(len).unwrap().checked_mul(1 << 5).unwrap() | (typ as u32)
 }
 
-/** The size excludes trailing padding (to multiple of 4). */
+ 
 pub fn parse_wmsg_header(header: u32) -> Option<(usize, WmsgType)> {
     let code = header & ((1 << 5) - 1);
     let len = (header >> 5) as usize;
@@ -215,23 +172,14 @@ where
         Ok(b) => b,
         Err(x) => {
             e = Err(x);
-            /* It doesn't matter whether we keep or exit in this case */
+             
             true
         }
     });
     e
 }
 
-/** Helper function to write into a finite length buffer. It does not propagate
- * errors and is most convenient if the write is certain to succeed. Example use:
- *
- * ```
- * let mut buf = [0u8; 256];
- * let slice = write_with_buffer(&mut buf, &|x: &mut &mut [u8]| {
- *     write!(x, "{}", number).expect("buffer should be long enough")
- * });
- * ```
- */
+ 
 pub fn write_with_buffer<F: Fn(&mut &mut [u8])>(b: &mut [u8], f: F) -> &[u8] {
     let len = b.len();
     let mut tmp = &mut b[..];
@@ -240,7 +188,7 @@ pub fn write_with_buffer<F: Fn(&mut &mut [u8])>(b: &mut [u8], f: F) -> &[u8] {
     &b[..slice_len]
 }
 
-/** A type to escape Wayland interface names, which should only consist of [a-zA-Z0-9_] */
+ 
 pub struct EscapeWlName<'a>(pub &'a [u8]);
 impl Display for EscapeWlName<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -258,8 +206,7 @@ impl Display for EscapeWlName<'_> {
     }
 }
 
-/** A type to escape all non-ascii-printable characters when Displayed, to leave strings
- * somewhat legible but make it clear exactly what bytes they contain */
+ 
 pub struct EscapeAsciiPrintable<'a>(pub &'a [u8]);
 impl Display for EscapeAsciiPrintable<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -275,7 +222,7 @@ impl Display for EscapeAsciiPrintable<'_> {
     }
 }
 
-/** Format a bool as 'T' or 'F' */
+ 
 pub fn fmt_bool(x: bool) -> char {
     if x {
         'T'
@@ -284,8 +231,7 @@ pub fn fmt_bool(x: bool) -> char {
     }
 }
 
-/** Return the string iff `x`, otherwise empty string. Can be efficient
- * for logging conditions that are rarely true. */
+ 
 pub fn string_if_bool(x: bool, y: &str) -> &str {
     if x {
         y
@@ -294,7 +240,7 @@ pub fn string_if_bool(x: bool, y: &str) -> &str {
     }
 }
 
-/* A heap-allocated 64-aligned array */
+ 
 pub struct AlignedArray {
     data: *mut u8,
     size: usize,
@@ -313,14 +259,14 @@ impl AlignedArray {
             let layout = std::alloc::Layout::from_size_align(size, 64).unwrap();
 
             unsafe {
-                // SAFETY: layout size was checked to be > 0
+                 
                 let mem = std::alloc::alloc_zeroed(layout).cast::<u8>();
                 assert!(!mem.is_null());
                 AlignedArray { data: mem, size }
             }
         }
     }
-    /* Returns (ptr, len); ptr is promised to be 64 aligned */
+     
     pub fn get_parts(&self) -> (*mut u8, usize) {
         (self.data, self.size)
     }
@@ -329,12 +275,12 @@ impl AlignedArray {
             return &mut [];
         }
         unsafe {
-            // SAFETY: self.data is not null since size > 0 was checked
-            // data is 64-aligned, and only 1-alignment needed for u8
-            // size matches allocated amount
-            // &mut self argument ensures no other calls to get_mut() can
-            // overlap in lifespan, so slice is not otherwise accessed; other unsafe
-            // users of AlignedArray should enforce similar behavior
+             
+             
+             
+             
+             
+             
             &mut *std::ptr::slice_from_raw_parts_mut(self.data, self.size)
         }
     }
@@ -343,7 +289,7 @@ impl AlignedArray {
             return &[];
         }
         unsafe {
-            // SAFETY: bounds OK else allocation would fail, todo
+             
             &*std::ptr::slice_from_raw_parts(self.data, self.size)
         }
     }
@@ -353,7 +299,7 @@ impl Drop for AlignedArray {
         if self.size > 0 {
             let layout = std::alloc::Layout::from_size_align(self.size, 64).unwrap();
             unsafe {
-                // SAFETY: self.data is not null and was allocated with the same layout
+                 
                 std::alloc::dealloc(self.data, layout);
             }
         }
@@ -441,24 +387,24 @@ fn compression_enum_roundtrip() {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VideoFormat {
-    /* Values are used in wire protocol */
+     
     H264 = 0,
     VP9 = 1,
     AV1 = 2,
 }
-/** Whether to prefer software or hardware encoding, when available */
+ 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum CodecPreference {
     SW = 0,
     HW = 1,
 }
 
-/** Configuration for video encoding/decoding */
+ 
 #[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct VideoSetting {
-    /* If not set, no video encoding done */
+     
     pub format: Option<VideoFormat>,
-    /* If not set, default */
+     
     pub bits_per_frame: Option<f32>,
     pub enc_pref: Option<CodecPreference>,
     pub dec_pref: Option<CodecPreference>,
@@ -605,7 +551,7 @@ pub struct AddDmabufPlane {
     pub modifier: u64,
 }
 
-/** Construct a fourcc code from the component letters */
+ 
 pub const fn fourcc(a: char, b: char, c: char, d: char) -> u32 {
     u32::from_le_bytes([(a as u8), (b as u8), (c as u8), (d as u8)])
 }
@@ -615,7 +561,7 @@ pub fn list_render_device_ids() -> Vec<u64> {
 
     let mut dev_ids = Vec::new();
     let Ok(dir_iter) = std::fs::read_dir("/dev/dri") else {
-        /* On failure, assume Vulkan is not available */
+         
         return dev_ids;
     };
 
@@ -634,23 +580,21 @@ pub fn list_render_device_ids() -> Vec<u64> {
     dev_ids
 }
 
-/** Open the render node with specified device id*/
+ 
 pub fn drm_open_render(dev_id: u64, rdrw: bool) -> Result<OwnedFd, String> {
-    /* On Linux, the render node is usually /dev/dri/renderD$X where $X is the
-     * minor value/lowest 8 bits, but this may not be the case on all platforms */
+     
     let rd: ReadDir =
         std::fs::read_dir("/dev/dri").map_err(|x| tag!("Failed to read /dev/dri/: {}", x))?;
     for entry in rd {
         let e = entry.map_err(|x| tag!("Failed to read entry in /dev/dri: {}", x))?;
 
-        /* Restrict to render nodes */
+         
         if e.file_name().as_bytes().starts_with(b"renderD") {
             let path = e.path();
             let Some(rdev) = get_rdev_for_file(&path) else {
                 continue;
             };
-            /* Note: technically there is a check-vs-open race condition here, but
-             * render nodes rarely change. It could be avoided using `fstat`. */
+             
             if rdev == dev_id {
                 let mut flags = fcntl::OFlag::O_CLOEXEC | fcntl::OFlag::O_NOCTTY;
                 if rdrw {
@@ -667,8 +611,7 @@ pub fn drm_open_render(dev_id: u64, rdrw: bool) -> Result<OwnedFd, String> {
     ))
 }
 
-/** Provide contents of dmabuf_slice_data, pretending the buffer has a linear modifier
- * and is tightly packed. */
+ 
 pub fn dmabuf_slice_make_ideal(drm_format: u32, width: u32, height: u32, bpp: u32) -> [u8; 64] {
     let mut out = [0; 64];
     out[0..4].copy_from_slice(&width.to_le_bytes());
@@ -681,20 +624,20 @@ pub fn dmabuf_slice_make_ideal(drm_format: u32, width: u32, height: u32, bpp: u3
     let stride = width.checked_mul(bpp).unwrap();
     out[32..36].copy_from_slice(&stride.to_le_bytes());
 
-    /* This modifier is only ever used by waypipe-c to decide what buffer type to create */
+     
     out[48..56].copy_from_slice(&0_u64.to_le_bytes());
-    /* Link plane to dmabuf */
+     
     out[56] = 1;
 
     out
 }
 
-/** Get the stride from a dmabuf_slice_data; waypipe-c will interpret this as the nominal stride. */
+ 
 pub fn dmabuf_slice_get_first_stride(data: [u8; 64]) -> u32 {
     u32::from_le_bytes(data[32..36].try_into().unwrap())
 }
 
-/** Set the close-on-exec flag for a file descriptor */
+ 
 pub fn set_cloexec(fd: &OwnedFd, cloexec: bool) -> Result<(), String> {
     fcntl::fcntl(
         fd,
@@ -708,22 +651,21 @@ pub fn set_cloexec(fd: &OwnedFd, cloexec: bool) -> Result<(), String> {
     Ok(())
 }
 
-/** Set the O_NONBLOCK flag for the file description, clearing all other flags. */
+ 
 pub fn set_nonblock(fd: &OwnedFd) -> Result<(), String> {
     fcntl::fcntl(fd, fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK))
         .map_err(|x| tag!("Failed to set nonblocking: {:?}", x))?;
     Ok(())
 }
 
-/** Unset the O_NONBLOCK flag for the file description, clearing all other flags. */
+ 
 pub fn set_blocking(fd: &OwnedFd) -> Result<(), String> {
     fcntl::fcntl(fd, fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::empty()))
         .map_err(|x| tag!("Failed to set blocking: {:?}", x))?;
     Ok(())
 }
 
-/** Given blocking `fd`, read exactly enough to fill `data`, or return error.
- * This blocks until completion or error. Returns Err(None) on EOF. */
+ 
 pub fn read_exact(fd: &OwnedFd, data: &mut [u8]) -> Result<(), Option<nix::Error>> {
     let mut offset = 0;
     while offset < data.len() {
@@ -738,7 +680,7 @@ pub fn read_exact(fd: &OwnedFd, data: &mut [u8]) -> Result<(), Option<nix::Error
                 continue;
             }
             Err(code) => {
-                /* Note: since `fd` should not have O_NONBLOCK, EAGAIN is unexpected */
+                 
                 return Err(Some(code));
             }
         }
@@ -746,8 +688,7 @@ pub fn read_exact(fd: &OwnedFd, data: &mut [u8]) -> Result<(), Option<nix::Error
     Ok(())
 }
 
-/** Given blocking `fd`, write `data`, or return error if not everything was written.
- * This blocks until completion or error. */
+ 
 pub fn write_exact(fd: &OwnedFd, data: &[u8]) -> nix::Result<()> {
     let mut offset = 0;
     while offset < data.len() {
@@ -759,7 +700,7 @@ pub fn write_exact(fd: &OwnedFd, data: &[u8]) -> nix::Result<()> {
                 continue;
             }
             Err(code) => {
-                /* Note: since `fd` should not have O_NONBLOCK, EAGAIN is unexpected */
+                 
                 return Err(code);
             }
         }
@@ -767,61 +708,47 @@ pub fn write_exact(fd: &OwnedFd, data: &[u8]) -> nix::Result<()> {
     Ok(())
 }
 
-/** A very simple and fast pseudorandom generator; output is only hard to
- * predict for very restricted; this should be enough to fool a branch
- * predictor or general-purpose compression algorithm, but should not be
- * used outside test or benchmarking code. */
+ 
 pub struct BadRng {
     pub state: u64,
 }
 
 impl BadRng {
-    /** Get a new u64 value */
+     
     pub fn next(&mut self) -> u64 {
-        // Xorshift RNG, see Marsaglia 2003
+         
         self.state ^= self.state << 13;
         self.state ^= self.state >> 7;
         self.state ^= self.state << 17;
         self.state
     }
-    /** Get a new value, in the range 0..maxval; this is only approximately uniform */
+     
     pub fn next_usize(&mut self, maxval: usize) -> usize {
         (self.next() % maxval as u64) as usize
     }
 }
 
-/** Basic layout parameters of a Wayland/drm_fourcc.h linear layout format plane; these are
- * sufficient to describe where data for a pixel is, within a plane, but do not describe
- * the exact way the data is encoded. */
+ 
 #[derive(Clone, Copy)]
 pub struct PlaneLayout {
-    /** Bytes per (subsampled) texel block */
+     
     pub bpt: NonZeroU32,
-    /** Horizontal subsampling ratio (width / texel block count) */
+     
     pub hsub: NonZeroU32,
-    /** Vertical subsampling ratio (height / texel block count) */
+     
     pub vsub: NonZeroU32,
-    /** Width of a texel block in pixels; this should divide hsub. */
+     
     pub htex: NonZeroU32,
-    /** Height of a texel block in pixels; this should divide vsub. */
+     
     pub vtex: NonZeroU32,
 }
 
-/** Basic layout parameters for a (possibly) multiplanar Wayland/drm_fourcc.h linear layout format.
- * These are sufficient to determine, given width/height/offset/stride parameters, where the data
- * corresponding to a given pixel is, but do not determine the exact way the data is encoded.
- */
+ 
 pub struct FormatLayout {
     pub planes: &'static [PlaneLayout],
 }
 
-/** Convert a DRM fourcc format code to a Wayland format code.
- *
- * Wayland and DRM differ in encodings for Argb8888 and Xrgb8888 only.
- *
- * Both names for Argb8888/Xrgb8888 can safely be used to specify wl_shm formats if
- * the compositor advertised both, but only DRM formats are permitted for linux-dmabuf.
- */
+ 
 pub fn drm_to_wayland(drm_format: u32) -> u32 {
     if drm_format == fourcc('A', 'R', '2', '4') {
         WlShmFormat::Argb8888 as u32
@@ -832,12 +759,11 @@ pub fn drm_to_wayland(drm_format: u32) -> u32 {
     }
 }
 
-/** Get the layout for a wl_shm/drm_fourcc format. Returns None if the format is unsupported
- * (either being entirely invalid, or a format lacking any linear layout.) */
+ 
 pub fn get_shm_format_layout(format: u32) -> Option<FormatLayout> {
     use crate::wayland_gen::WlShmFormat::*;
 
-    /* Safety: values are not zero */
+     
     const N1: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(1) };
     const N2: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(2) };
     const N3: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(3) };
@@ -861,7 +787,7 @@ pub fn get_shm_format_layout(format: u32) -> Option<FormatLayout> {
         vtex: N1,
     };
 
-    /* Formats which do not have a wl_shm name yet */
+     
     const NV20: u32 = fourcc('N', 'V', '2', '0');
     const NV30: u32 = fourcc('N', 'V', '3', '0');
     match format {
@@ -896,7 +822,7 @@ pub fn get_shm_format_layout(format: u32) -> Option<FormatLayout> {
                         vtex: N1,
                     },
                     PlaneLayout {
-                        // ?
+                         
                         bpt: N5,
                         hsub: N2,
                         vsub: N1,
@@ -1207,4 +1133,84 @@ pub fn get_shm_format_layout(format: u32) -> Option<FormatLayout> {
             return None;
         }
     })
+}
+
+use nix::sys::mman;
+use nix::sys::stat::Mode;
+
+#[cfg(not(target_os = "linux"))]
+pub fn create_anon_file() -> Result<OwnedFd, String> {
+    use std::ffi::CString;
+    use nix::fcntl::OFlag;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::os::fd::FromRawFd;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+     
+    let mut i = 0;
+    loop {
+        let mut path = std::env::temp_dir();
+        path.push(format!("waypipe-shadow-{}-{}", now, i));
+        let cname = CString::new(path.to_string_lossy().as_bytes()).unwrap();
+
+         
+        match fcntl::open(cname.as_c_str(), OFlag::O_RDWR | OFlag::O_CREAT | OFlag::O_EXCL, Mode::S_IRUSR | Mode::S_IWUSR) {
+            Ok(fd) => {
+                 
+                let _ = unistd::unlink(cname.as_c_str());
+                return Ok(fd);
+            }
+            Err(nix::errno::Errno::EEXIST) => {
+                 i += 1;
+                 continue;
+            }
+            Err(e) => return Err(format!("open temp file (fallback) failed: {}", e)),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn create_anon_file() -> Result<OwnedFd, String> {
+    use nix::sys::memfd;
+    use std::ffi::CString;
+    let name = CString::new("waypipe").unwrap();
+    memfd::memfd_create(&name, memfd::MemFdCreateFlag::MFD_CLOEXEC | memfd::MemFdCreateFlag::MFD_ALLOW_SEALING)
+        .map_err(|x| format!("memfd_create failed: {}", x))
+}
+
+use nix::sys::signal::SigSet;
+use nix::sys::time::TimeSpec;
+use nix::poll::{PollFd, PollTimeout};
+
+pub fn create_pipe() -> nix::Result<(OwnedFd, OwnedFd)> {
+    #[cfg(target_os = "linux")]
+    {
+        unistd::pipe2(fcntl::OFlag::O_CLOEXEC | fcntl::OFlag::O_NONBLOCK)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let (r, w) = unistd::pipe()?;
+        fcntl::fcntl(&r, fcntl::FcntlArg::F_SETFD(fcntl::FdFlag::FD_CLOEXEC))?;
+        fcntl::fcntl(&w, fcntl::FcntlArg::F_SETFD(fcntl::FdFlag::FD_CLOEXEC))?;
+        fcntl::fcntl(&r, fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK))?;
+        fcntl::fcntl(&w, fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK))?;
+        Ok((r, w))
+    }
+}
+
+pub fn sys_poll(fds: &mut [PollFd], timeout: Option<TimeSpec>, _sigmask: Option<SigSet>) -> nix::Result<nix::libc::c_int> {
+    #[cfg(target_os = "linux")]
+    {
+        nix::poll::ppoll(fds, timeout, _sigmask)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let t = if let Some(ts) = timeout {
+             let ms = ts.tv_sec() * 1000 + ts.tv_nsec() / 1000000;
+             PollTimeout::try_from(ms).unwrap_or(PollTimeout::NONE)
+        } else {
+             PollTimeout::NONE
+        };
+        nix::poll::poll(fds, t)
+    }
 }

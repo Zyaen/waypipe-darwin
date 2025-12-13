@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! `waypipe bench` implementation */
+ 
+ 
 use crate::compress::*;
 use crate::kernel::{apply_diff_one, construct_diff_segment_two};
 use crate::util::*;
@@ -14,9 +14,9 @@ enum DiffPattern {
     Off,
     MemcmpOff,
     MinimumOff,
-    Alternating100, // very short cycle, should be papered over
-    Alternating1K,  // 2kb ~~ 512 pixels
-    Alternating2K,  // 4kb cycle ~ 1024 pixels,
+    Alternating100,  
+    Alternating1K,   
+    Alternating2K,   
 }
 
 fn fill_alternating(rng: &mut BadRng, data: &mut [u8], span_min: usize, span_max: usize) {
@@ -48,7 +48,7 @@ unsafe fn read_replace_write_avx2(src: &[u8], rdwrite: &mut [u8], dst: &mut [u8]
         let ones = _mm256_set1_epi64x(u64::MAX as i64);
         const UNROLL: usize = 4;
         for k in 0..(src.len() / (32 * UNROLL)) {
-            // Widely unrolled
+             
             let mut xs = [_mm256_undefined_si256(); UNROLL];
             let mut ys = [_mm256_undefined_si256(); UNROLL];
 
@@ -69,7 +69,7 @@ unsafe fn read_replace_write_avx2(src: &[u8], rdwrite: &mut [u8], dst: &mut [u8]
             let sum = _mm256_add_epi32(sum0, sum2);
 
             if _mm256_testc_si256(sum, ones) != 0 {
-                // Introduce early exit option to consume reads and inhibit memcpy optimization
+                 
                 panic!();
             }
 
@@ -94,7 +94,7 @@ unsafe fn read_replace_write_avx2(src: &[u8], rdwrite: &mut [u8], dst: &mut [u8]
             _mm256_store_si256(rdwrite.as_mut_ptr().add(i * 32) as *mut _, x);
             _mm256_storeu_si256(dst.as_mut_ptr().add(i * 32) as *mut _, x);
             if i % 4 == 0 && _mm256_testc_si256(s, ones) != 0 {
-                /* Should never happen; this test should prevent memcpy optimization */
+                 
                 panic!();
             }
         }
@@ -105,8 +105,7 @@ unsafe fn read_replace_write_avx2(src: &[u8], rdwrite: &mut [u8], dst: &mut [u8]
             let x = _mm256_load_si256(src.as_ptr().add(i * 32) as *const _);
             let y = _mm256_load_si256(rdwrite.as_ptr().add(i * 32) as *const _);
             let s = _mm256_add_epi32(x, y);
-            /* Store "s" instead of the correct "x", because otherwise the compiler will
-             * mis-optimize by extracting a memcpy and increase total memory bandwidth used. */
+             
             _mm256_store_si256(rdwrite.as_mut_ptr().add(i * 32) as *mut _, s);
             _mm256_storeu_si256(dst.as_mut_ptr().add(i * 32) as *mut _, s);
         }
@@ -115,9 +114,7 @@ unsafe fn read_replace_write_avx2(src: &[u8], rdwrite: &mut [u8], dst: &mut [u8]
     src.len() as u32
 }
 
-/* Test function: count the number of differences between src1 and rdwrite, and then
- * copy src1 to rdwrite and dst2. The performance of this, if properly optimized, should be
- * a lower bound on diff construction performance in the "everything changed" scenario. */
+ 
 fn read_replace_write(src: &[u8], rdwrite: &mut [u8], dst: &mut [u8]) -> u32 {
     const CHUNK_SIZE: usize = 256;
     let mut any_nondiff = false;
@@ -156,7 +153,7 @@ unsafe fn read_once_avx2(src: &[u8]) -> u32 {
         for (j, x) in xs.iter_mut().enumerate() {
             let k = 4 * i + j;
             let y = _mm256_load_si256(src.as_ptr().add(k * 32) as *const _);
-            *x = _mm256_max_epi32(*x, y); // max epi32 may be faster than epi8
+            *x = _mm256_max_epi32(*x, y);  
         }
     }
 
@@ -171,8 +168,7 @@ unsafe fn read_once_avx2(src: &[u8]) -> u32 {
     nonzero as u32
 }
 
-/* Test function: how long does it take to just _read_ the source, and compute something trivial
- * (like whether it is all-zero); only run on all 0 input */
+ 
 fn read_once(src: &[u8]) -> u32 {
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     if is_x86_feature_detected!("avx2") {
@@ -198,11 +194,11 @@ fn estimate_diff_speed(pattern: DiffPattern) {
 
     match pattern {
         DiffPattern::IdealOn | DiffPattern::On => {
-            /* disagree with baseline everwhere */
+             
             source.fill(1);
         }
         DiffPattern::MemcmpOff | DiffPattern::Off | DiffPattern::MinimumOff => {
-            /* match baseline everwhere */
+             
             source.fill(0);
         }
         DiffPattern::Alternating100 => {
@@ -220,7 +216,7 @@ fn estimate_diff_speed(pattern: DiffPattern) {
     let mut elapsed_times = Vec::<f64>::new();
     let mut last_diff_len = None;
     for i in 0..ntrials {
-        /* Design: construct diffs, periodically diffing the reference against the source and baseline patterns */
+         
 
         let test_src: &[u8] = std::hint::black_box(if i % 2 == 0 { source } else { baseline });
 
@@ -239,8 +235,7 @@ fn estimate_diff_speed(pattern: DiffPattern) {
         let end = Instant::now();
 
         if let Some(d) = last_diff_len {
-            /* Light sanity check: diff length should only depend on the pattern of differences, not on the
-             * specific contents of the data */
+             
             assert!(d == diff_len);
         }
         elapsed_times.push(end.duration_since(start).as_secs_f64());
@@ -248,10 +243,10 @@ fn estimate_diff_speed(pattern: DiffPattern) {
     }
     let diff_len = last_diff_len.unwrap();
 
-    /* Skip the first run (may not be in cache) */
+     
     let hot_times = &elapsed_times[1..];
 
-    // minor issue: not stable to outliers or numerical issues, there are better algorithms
+     
     let mean = hot_times.iter().sum::<f64>() / hot_times.len() as f64;
     let sample_var = hot_times
         .iter()
@@ -326,9 +321,7 @@ fn estimate_diff_compress_speed(
         }
     }
 
-    /* Operate on the large region chunk-by-chunk -- this provides crude statistics
-     * to estimate uncertainty for timing and makes it possible to stop early if
-     * compression is very slow */
+     
     let mut diff_start = 0;
     let mut data = Vec::new();
     let total_start = Instant::now();
@@ -388,8 +381,7 @@ fn estimate_diff_compress_speed(
         let time_apply = end.duration_since(mid).as_secs_f32();
         data.push((time_diff, time_apply, iend - istart, comp_len));
 
-        /* If replicating the buffer takes a long time, then stop; cache
-         * effects will be negligible compared to compression/decompression time */
+         
         if end.duration_since(total_start).as_secs_f32() >= 1.0 && data.len() >= 3 {
             break;
         }
@@ -407,7 +399,7 @@ fn estimate_diff_compress_speed(
     for (time_diff, time_apply, input_len, output_len) in data.iter() {
         proc_len += input_len;
         comp_len += output_len;
-        /* The shards are almost equal in length */
+         
         speeds_diff.push((*input_len as f32) / time_diff);
         speeds_apply.push((*input_len as f32) / time_apply);
     }
@@ -436,8 +428,7 @@ fn estimate_diff_compress_speed(
 fn run_diff_speed_benchmark() {
     println!("Diff pattern speed for 2^20 bytes, using sample stdev");
     estimate_diff_speed(DiffPattern::On);
-    /* NOTE: these are _not_ perfect benchmarks, and should not be used for comparisons;
-     * thermal or other throttling makes results after the first run slower. Thus, run 'On' twice. */
+     
     estimate_diff_speed(DiffPattern::On);
     estimate_diff_speed(DiffPattern::IdealOn);
     estimate_diff_speed(DiffPattern::Off);
@@ -472,8 +463,7 @@ pub fn run_benchmark(opts: &Options, fast_mode: bool) -> Result<(), String> {
 
     let mut text_results = Vec::new();
     let mut img_results = Vec::new();
-    /* A long test length is useful for realism (to avoid having *all data fit into cache), but makes
-     * the test slower to run, so no repetitions will be done. */
+     
     let test_size = if fast_mode { 1 << 16 } else { 1 << 22 };
     println!("Measured (diff+compress,decompress+apply) speeds and compression ratios");
     println!("(single-threaded, unpipelined, quite artificial, single measurement)");
@@ -517,7 +507,7 @@ pub fn run_benchmark(opts: &Options, fast_mode: bool) -> Result<(), String> {
     for (typ, results) in &[("text-like", &text_results), ("image-like", &img_results)] {
         for m in mbps_opts {
             let bandwidth = m * 1e6;
-            /* optimal choice: */
+             
             let mut best = Compression::None;
             let mut best_time = f32::INFINITY;
             for (c, (speed_diff, speed_apply, ratio)) in cvs.iter().zip(results.iter()) {

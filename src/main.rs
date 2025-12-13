@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Main executable for Waypipe, handles all subcommands. */
+ 
+ 
 use clap::{value_parser, Arg, ArgAction, Command};
 use log::{debug, error, Log, Record};
 use nix::errno::Errno;
@@ -41,7 +41,7 @@ mod wayland_gen;
 use crate::mainloop::*;
 use crate::util::*;
 
-/** Logger configuration data */
+ 
 struct Logger {
     max_level: log::LevelFilter,
     pid: u32,
@@ -110,7 +110,7 @@ impl Log for Logger {
                 .file()
                 .unwrap_or("src/unknown")
                 .strip_prefix("src/")
-                .unwrap(),
+                .unwrap_or_else(|| record.file().unwrap_or("unknown")),
             record.line().unwrap_or(0),
             esc2,
             record.args(),
@@ -118,14 +118,14 @@ impl Log for Logger {
         );
         let mut str_end = cursor.position() as usize;
         if str_end >= MAX_LOG_LEN - 9 {
-            /* Deal with possible partial UTF-8 char */
+             
             str_end = match std::str::from_utf8(&buf[..str_end]) {
                 Ok(x) => x.len(),
                 Err(y) => y.valid_up_to(),
             };
         }
         if str_end >= MAX_LOG_LEN - 9 {
-            /* Assume message was truncated */
+             
             assert!(str_end <= MAX_LOG_LEN - 5, "{} {}", str_end, MAX_LOG_LEN);
             buf[str_end..str_end + 3].fill(b'.');
             if self.anti_staircase {
@@ -142,18 +142,18 @@ impl Log for Logger {
         let _ = handle.flush();
     }
     fn flush(&self) {
-        /* not needed */
+         
     }
 }
 
-/** Return a random list of 10 alphanumeric characters */
+ 
 fn get_rand_tag() -> Result<[u8; 10], String> {
     let mut rand_buf = [0_u8; 16];
     getrandom::getrandom(&mut rand_buf).map_err(|x| tag!("Failed to get random bits: {}", x))?;
     let mut n: u128 = u128::from_le_bytes(rand_buf);
 
-    // Note: log2(62^10) ≈ 59.5 which is ≪ 128, so the resulting
-    // random strings are only very slightly biased.
+     
+     
     let mut rand_tag = [0u8; 10];
     for i in rand_tag.iter_mut() {
         let v = (n % 62) as u32;
@@ -169,10 +169,10 @@ fn get_rand_tag() -> Result<[u8; 10], String> {
     Ok(rand_tag)
 }
 
-/** Flags for `open()` to open a reference to a directory */
+ 
 #[cfg(target_os = "linux")]
 fn dir_flags() -> fcntl::OFlag {
-    /* O_PATH is from 2.6.39 Linux */
+     
     fcntl::OFlag::O_PATH | fcntl::OFlag::O_DIRECTORY
 }
 #[cfg(not(target_os = "linux"))]
@@ -180,8 +180,13 @@ fn dir_flags() -> fcntl::OFlag {
     fcntl::OFlag::O_DIRECTORY
 }
 
-/** Get a file descriptor corresponding to a path, suitable for `fchdir()` */
+ 
 fn open_folder(p: &Path) -> Result<OwnedFd, String> {
+    let p = if p.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        p
+    };
     fcntl::open(
         p,
         dir_flags() | fcntl::OFlag::O_CLOEXEC | fcntl::OFlag::O_NOCTTY,
@@ -190,25 +195,24 @@ fn open_folder(p: &Path) -> Result<OwnedFd, String> {
     .map_err(|x| tag!("Failed to open folder '{:?}': {}", p, x))
 }
 
-/** Connection information for a VSOCK socket. */
+ 
 #[derive(Debug, Copy, Clone)]
 struct VSockConfig {
-    /** If true, route connection via host (flag VMADDR_FLAG_TO_HOST) to a sibling VM. */
+     
     to_host: bool,
-    /** CID to use when connecting to the socket. By default will be VMADDR_CID_HOST.
-     * (Waypipe always binds sockets using VMADDR_CID_ANY.) */
+     
     cid: u32,
     port: u32,
 }
 
-/** Specification for a Unix (or VSOCK) socket that Waypipe may bind or connect to. */
+ 
 #[derive(Debug, Clone)]
 enum SocketSpec {
     VSock(VSockConfig),
     Unix(PathBuf),
 }
 
-/* Wrapper for `libc::VMADDR_CID_HOST` or 0 if not supported */
+ 
 #[cfg(target_os = "linux")]
 const VMADDR_CID_HOST: u32 = libc::VMADDR_CID_HOST;
 #[cfg(not(target_os = "linux"))]
@@ -249,7 +253,7 @@ impl fmt::Display for VSockConfig {
     }
 }
 
-/** Remove the dead child indicated by `pid` from the connection set */
+ 
 fn prune_connections(connections: &mut BTreeMap<u32, std::process::Child>, pid: nix::unistd::Pid) {
     if let Some(mut child) = connections.remove(&(pid.as_raw() as u32)) {
         debug!("Waiting for dead child {} to reveal status", child.id());
@@ -265,7 +269,7 @@ fn prune_connections(connections: &mut BTreeMap<u32, std::process::Child>, pid: 
     }
 }
 
-/** Wait until all processes in the set have died */
+ 
 fn wait_for_connnections(mut connections: BTreeMap<u32, std::process::Child>) {
     while let Some((_, mut child)) = connections.pop_first() {
         debug!("Waiting for dead child {} to reveal status", child.id());
@@ -274,10 +278,7 @@ fn wait_for_connnections(mut connections: BTreeMap<u32, std::process::Child>) {
     }
 }
 
-/** Create the argument list for `waypipe client-conn` or `waypipe server-conn`
- *
- * New strings allocated for this will be stored into `strings`.
- */
+ 
 fn build_connection_command<'a>(
     strings: &'a mut Vec<OsString>,
     socket_path: &'a SocketSpec,
@@ -299,8 +300,7 @@ fn build_connection_command<'a>(
     let vid_str = &strings[2];
     let socket_str = &strings[3];
 
-    /* Unlike the parent process, use short option names for these, making the command
-     * line shorter and easier to skim */
+     
     args.push(OsStr::new("-s"));
     args.push(socket_str);
     if matches!(socket_path, SocketSpec::VSock(_)) {
@@ -352,19 +352,14 @@ fn build_connection_command<'a>(
     args
 }
 
-/** Send connection header and run the main proxy loop for a new
- * `waypipe server` connection. `link_fd` is expected to be a _blocking_
- * socket.
- */
+ 
 fn handle_server_conn(
     link_fd: OwnedFd,
     wayland_fd: OwnedFd,
     opts: &Options,
     wire_version_override: Option<u32>,
 ) -> Result<(), String> {
-    /* Note: the last 12 bytes of the header will stay at zero. They would
-     * only need be set to a unique (random) value if reconnection support were
-     * implemented. */
+     
     let mut header: [u8; 16] = [0_u8; 16];
 
     let ver = wire_version_override
@@ -420,29 +415,45 @@ fn handle_server_conn(
     )
 }
 
-/** Connect to a socket (and possibly unlink its path); the socket fd returned is
- * cloexec. the socket file status flags may or may not include O_NONBLOCK and
- * should be set by the caller. */
+ 
 fn socket_connect(
     spec: &SocketSpec,
     cwd: &OwnedFd,
     nonblocking: bool,
-    unlink_after: bool, /* Unlink after connecting? */
+    unlink_after: bool,  
 ) -> Result<OwnedFd, String> {
-    let socket_flags = if nonblocking {
-        socket::SockFlag::SOCK_CLOEXEC | socket::SockFlag::SOCK_NONBLOCK
-    } else {
-        socket::SockFlag::SOCK_CLOEXEC
-    };
     let socket = match spec {
         SocketSpec::Unix(path) => {
-            let socket = socket::socket(
-                socket::AddressFamily::Unix,
-                socket::SockType::Stream,
-                socket_flags,
-                None,
-            )
-            .map_err(|x| tag!("Failed to create socket: {}", x))?;
+            #[cfg(target_os = "linux")]
+            let socket = {
+                let socket_flags = if nonblocking {
+                    socket::SockFlag::SOCK_CLOEXEC | socket::SockFlag::SOCK_NONBLOCK
+                } else {
+                    socket::SockFlag::SOCK_CLOEXEC
+                };
+                socket::socket(
+                    socket::AddressFamily::Unix,
+                    socket::SockType::Stream,
+                    socket_flags,
+                    None,
+                )
+                .map_err(|x| tag!("Failed to create socket: {}", x))?
+            };
+            #[cfg(not(target_os = "linux"))]
+            let socket = {
+                let s = socket::socket(
+                    socket::AddressFamily::Unix,
+                    socket::SockType::Stream,
+                    socket::SockFlag::empty(),
+                    None,
+                )
+                .map_err(|x| tag!("Failed to create socket: {}", x))?;
+                set_cloexec(&s, true)?;
+                if nonblocking {
+                    set_nonblock(&s)?;
+                }
+                s
+            };
 
             let file = path
                 .file_name()
@@ -452,12 +463,12 @@ fn socket_connect(
 
             let r = if let Some(folder) = path.parent() {
                 nix::unistd::chdir(folder).map_err(|x| tag!("Failed to visit folder: {}", x))?;
-                // eventually: is a 'connectat' equivalent available?
-                // can use /proc/self/fd to workaround socket path length issues
+                 
+                 
                 let x = socket::connect(socket.as_raw_fd(), &addr);
                 if x.is_ok() && unlink_after {
-                    // race condition possible if socket is moved or replaced, but
-                    // unlinking should have no ill effect in such scenarios
+                     
+                     
                     nix::unistd::unlink(file)
                         .map_err(|x| tag!("Failed to unlink socket: {}", x))?;
                 }
@@ -487,7 +498,7 @@ fn socket_connect(
             .map_err(|x| tag!("Failed to create socket: {}", x))?;
 
             unsafe {
-                /* nix does not yet support svm_flags, so directly use libc */
+                 
                 const VMADDR_FLAG_TO_HOST: u8 = 0x1;
                 let svm_flags = if v.to_host { VMADDR_FLAG_TO_HOST } else { 0 };
                 let addr = libc::sockaddr_vm {
@@ -500,8 +511,8 @@ fn socket_connect(
                 assert!(std::mem::align_of::<libc::sockaddr_vm>() == 4);
                 assert!(std::mem::size_of::<libc::sockaddr_vm>() == 16);
 
-                // SAFETY: `addr` is repr(C) and fully initialzied;
-                // connect() only reads within the size bounds given
+                 
+                 
                 let r = libc::connect(
                     socket.as_raw_fd(),
                     &addr as *const libc::sockaddr_vm as *const libc::sockaddr,
@@ -524,9 +535,7 @@ fn socket_connect(
     Ok(socket)
 }
 
-/** Helper structure to unlink a created file when it Drops.
- *
- * This keeps the folder in which the file was created alive. */
+ 
 struct FileCleanup {
     folder: OwnedFd,
     full_path: PathBuf,
@@ -547,16 +556,23 @@ impl Drop for FileCleanup {
     }
 }
 
-/** Create and bind to a Unix socket
- *
- * This returns the socket and a file cleanup structure to unlink it when
- * it is no longer needed.
- */
+ 
 fn unix_socket_create_and_bind(
     path: &Path,
     cwd: &OwnedFd,
-    flags: socket::SockFlag,
+     
+    nonblock: bool,
+    cloexec: bool,
 ) -> Result<(OwnedFd, FileCleanup), String> {
+    #[cfg(target_os = "linux")]
+    let flags = {
+        let mut f = socket::SockFlag::empty();
+        if nonblock { f |= socket::SockFlag::SOCK_NONBLOCK; }
+        if cloexec { f |= socket::SockFlag::SOCK_CLOEXEC; }
+        f
+    };
+    #[cfg(not(target_os = "linux"))]
+    let flags = socket::SockFlag::empty();
     let socket: OwnedFd = socket::socket(
         socket::AddressFamily::Unix,
         socket::SockType::Stream,
@@ -564,6 +580,17 @@ fn unix_socket_create_and_bind(
         None,
     )
     .map_err(|x| tag!("Failed to create socket: {}", x))?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        use nix::fcntl;
+        if cloexec {
+            let _ = fcntl::fcntl(&socket, fcntl::FcntlArg::F_SETFD(fcntl::FdFlag::FD_CLOEXEC));
+        }
+        if nonblock {
+            let _ = fcntl::fcntl(&socket, fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK));
+        }
+    }
 
     let file = path
         .file_name()
@@ -575,8 +602,8 @@ fn unix_socket_create_and_bind(
         let f = open_folder(folder)?;
 
         unistd::fchdir(&f).map_err(|x| tag!("Failed to visit folder: {}", x))?;
-        // eventually: is a 'bindat' equivalent available?
-        // can use /proc/self/fd to workaround socket path length issues
+         
+         
         let x = socket::bind(socket.as_raw_fd(), &addr);
         unistd::fchdir(cwd).map_err(|x| tag!("Failed to return to original path: {}", x))?;
         (f, x)
@@ -596,11 +623,13 @@ fn unix_socket_create_and_bind(
     ))
 }
 
-/** Create and bind to a socket */
+ 
 fn socket_create_and_bind(
     path: &SocketSpec,
     cwd: &OwnedFd,
-    flags: socket::SockFlag,
+     
+    nonblock: bool,
+    cloexec: bool,
 ) -> Result<(OwnedFd, Option<FileCleanup>), String> {
     match path {
         #[cfg(target_os = "linux")]
@@ -608,7 +637,19 @@ fn socket_create_and_bind(
             let socket: OwnedFd = socket::socket(
                 socket::AddressFamily::Vsock,
                 socket::SockType::Stream,
-                flags,
+                socket::SockType::Stream,
+                {
+                    #[cfg(target_os = "linux")]
+                    let flags = {
+                        let mut f = socket::SockFlag::empty();
+                        if nonblock { f |= socket::SockFlag::SOCK_NONBLOCK; }
+                        if cloexec { f |= socket::SockFlag::SOCK_CLOEXEC; }
+                        f
+                    };
+                    #[cfg(not(target_os = "linux"))]
+                    let flags = socket::SockFlag::empty();
+                    flags
+                },
                 None,
             )
             .map_err(|x| tag!("Failed to create socket: {}", x))?;
@@ -623,19 +664,18 @@ fn socket_create_and_bind(
         SocketSpec::VSock(_) => unreachable!(),
 
         SocketSpec::Unix(path) => {
-            let (socket, cleanup) = unix_socket_create_and_bind(path, cwd, flags)?;
+            let (socket, cleanup) = unix_socket_create_and_bind(path, cwd, nonblock, cloexec)?;
             Ok((socket, Some(cleanup)))
         }
     }
 }
 
-/** Connect to the Wayland display socket at the given `path`. */
+ 
 fn connect_to_display_at(cwd: &OwnedFd, path: &Path) -> Result<OwnedFd, String> {
     socket_connect(&SocketSpec::Unix(path.into()), cwd, true, false)
 }
 
-/** Connect to the Wayland display socket indicated by `WAYLAND_DISPLAY` and
- * (if not using absolute path) `XDG_RUNTIME_DIR` */
+ 
 fn connect_to_wayland_display(cwd: &OwnedFd) -> Result<OwnedFd, String> {
     let wayl_disp = std::env::var_os("WAYLAND_DISPLAY")
         .ok_or("Missing environment variable WAYLAND_DISPLAY")?;
@@ -653,7 +693,7 @@ fn connect_to_wayland_display(cwd: &OwnedFd) -> Result<OwnedFd, String> {
     }
 }
 
-/** Get the socket fd number indicated by environment variable `WAYLAND_SOCKET` */
+ 
 fn get_wayland_socket_id() -> Result<Option<i32>, String> {
     if let Some(x) = std::env::var_os("WAYLAND_SOCKET") {
         let y = x
@@ -667,17 +707,17 @@ fn get_wayland_socket_id() -> Result<Option<i32>, String> {
     }
 }
 
-/** For SIGINT handler; is set to true after SIGINT was received */
+ 
 static SIGINT_RECEIVED: AtomicBool = AtomicBool::new(false);
 
-/** Handler to record whether SIGINT was received */
+ 
 extern "C" fn sigint_handler(_signo: i32) {
     SIGINT_RECEIVED.store(true, Ordering::Release);
 }
 
-/** Setup a SIGINT handler, and return a modified poll mask in which SIGINT is not blocked. */
+ 
 fn setup_sigint_handler() -> Result<(signal::SigSet, &'static AtomicBool), String> {
-    /* Block SIGINT, except when polling; this prevents a race in which SIGINT is received outside the poll. */
+     
     let mut mask = signal::SigSet::empty();
     mask.add(signal::SIGINT);
     let mut pollmask = mask
@@ -691,8 +731,8 @@ fn setup_sigint_handler() -> Result<(signal::SigSet, &'static AtomicBool), Strin
         signal::SigSet::empty(),
     );
     unsafe {
-        // SAFETY: this is only called once, so existing signal handler is being overwritten;
-        // Also, sigint_handler is async signal safe
+         
+         
         signal::sigaction(signal::Signal::SIGINT, &sigaction)
             .map_err(|x| tag!("Failed to set sigaction: {}", x))?;
     }
@@ -700,9 +740,7 @@ fn setup_sigint_handler() -> Result<(signal::SigSet, &'static AtomicBool), Strin
     Ok((pollmask, &SIGINT_RECEIVED))
 }
 
-/** Check connection header and run the main proxy loop for a new
- * `waypipe client` connection. `link_fd` is expected to be a
- * _blocking_ socket. */
+ 
 fn handle_client_conn(link_fd: OwnedFd, wayland_fd: OwnedFd, opts: &Options) -> Result<(), String> {
     let mut buf = [0_u8; 16];
     read_exact(&link_fd, &mut buf)
@@ -726,7 +764,7 @@ fn handle_client_conn(link_fd: OwnedFd, wayland_fd: OwnedFd, opts: &Options) -> 
     );
 
     let comp = header & CONN_COMPRESSION_MASK;
-    /* Validate compression type */
+     
     let expected_comp = match opts.compression {
         Compression::None => CONN_NO_COMPRESSION,
         Compression::Lz4(_) => CONN_LZ4_COMPRESSION,
@@ -739,7 +777,7 @@ fn handle_client_conn(link_fd: OwnedFd, wayland_fd: OwnedFd, opts: &Options) -> 
     }
 
     let video = header & CONN_VIDEO_MASK;
-    /* Ignore video details for now? OpenDMAVidSrcV2/OpenDMAVidDstV2 explicitly specify format */
+     
     match video {
         CONN_NO_VIDEO => {
             debug!("Connected waypipe-server not receiving video");
@@ -758,7 +796,7 @@ fn handle_client_conn(link_fd: OwnedFd, wayland_fd: OwnedFd, opts: &Options) -> 
         }
     }
 
-    /* Nothing to do here: dmabuf creation requires letting linux-dmabuf-v1 through */
+     
     let remote_using_dmabuf = header & CONN_NO_DMABUF_SUPPORT == 0;
     debug!(
         "Connected waypipe-server may use dmabufs: {}",
@@ -780,26 +818,14 @@ fn handle_client_conn(link_fd: OwnedFd, wayland_fd: OwnedFd, opts: &Options) -> 
     )
 }
 
-/** Start a process to handle a specific Wayland connection.
- *
- * (Use spawn instead of forking. Spawning ensures ASLR is reseeded, and
- * provides a nicer command line string, with the mixed-cost-benefit of
- * using the latest dynamic library versions, and repeating process
- * setup costs.).
- *
- * Note: the connection file descriptor `connection_fd` is expected to
- * not be cloexec, and not have the O_NONBLOCK file status flag.
- */
+ 
 fn spawn_connection_handler(
     self_path: &OsStr,
     conn_args: &[&OsStr],
     connection_fd: OwnedFd,
     wayland_display: Option<&OsStr>,
 ) -> Result<Child, String> {
-    /* Launch connection handler using explicit path to self.  An alternative
-     * would be to directly use /proc/self/exe, but some tools would end up
-     * using the file name 'exe' to label the client process, instead of the
-     * value of argv0, which could be confusing. */
+     
     let mut process = std::process::Command::new(self_path);
     process
         .arg0(env!("CARGO_PKG_NAME"))
@@ -826,7 +852,7 @@ fn spawn_connection_handler(
     Ok(child)
 }
 
-/** `waypipe-server` logic for the single connection case */
+ 
 fn run_server_oneshot(
     command: &[&std::ffi::OsStr],
     argv0: &std::ffi::OsStr,
@@ -835,6 +861,7 @@ fn run_server_oneshot(
     socket_path: &SocketSpec,
     cwd: &OwnedFd,
 ) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
     let (sock1, sock2) = socket::socketpair(
         socket::AddressFamily::Unix,
         socket::SockType::Stream,
@@ -842,6 +869,21 @@ fn run_server_oneshot(
         socket::SockFlag::SOCK_NONBLOCK | socket::SockFlag::SOCK_CLOEXEC,
     )
     .map_err(|x| tag!("Failed to create socketpair: {}", x))?;
+    #[cfg(not(target_os = "linux"))]
+    let (sock1, sock2) = {
+        let (s1, s2) = socket::socketpair(
+            socket::AddressFamily::Unix,
+            socket::SockType::Stream,
+            None,
+            socket::SockFlag::empty(),
+        )
+        .map_err(|x| tag!("Failed to create socketpair: {}", x))?;
+        set_cloexec(&s1, true)?;
+        set_cloexec(&s2, true)?;
+        set_nonblock(&s1)?;
+        set_nonblock(&s2)?;
+        (s1, s2)
+    };
 
     let sock_str = format!("{}", sock2.as_raw_fd());
     set_cloexec(&sock2, false)?;
@@ -866,8 +908,7 @@ fn run_server_oneshot(
     Ok(())
 }
 
-/** Optional parameters for run_server_inner() and spawn_xwls_handler() related to
- * the X display socket used for xwayland-satellite. */
+ 
 struct XSocketInfo {
     #[cfg(target_os = "linux")]
     abstract_socket: OwnedFd,
@@ -875,13 +916,13 @@ struct XSocketInfo {
     display: u8,
 }
 
-/** State needed to safely unlink the X display lock file and Unix socket */
+ 
 struct XCleanup {
-    /** The directory /tmp/ */
+     
     tmp_fd: OwnedFd,
-    /** The directory /tmp/.X11-unix */
+     
     x11_unix_fd: OwnedFd,
-    /** The display number (enough to determine which paths to unlink) */
+     
     display: u8,
 }
 
@@ -913,8 +954,7 @@ impl Drop for XCleanup {
             )
         }
 
-        /* Unlock the lock file last, in the reverse of acquisition order, to
-         * try to reduce cases where multiple processes race to set up all sockets */
+         
         debug!(
             "Trying to unlink lock file created at: /tmp/.X{}-lock",
             self.display
@@ -930,12 +970,11 @@ impl Drop for XCleanup {
             )
         }
 
-        /* .X11-unix is _not_ unlinked, even if this was the last display */
+         
     }
 }
 
-/** Select the next available X display, creating a lock file
- * and binding sockets for it. */
+ 
 fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
     let tmp_fd = open_folder(Path::new("/tmp/"))?;
 
@@ -961,8 +1000,8 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
     )
     .map_err(|x| tag!("Failed to open subfolder '.X11-unix' of '/tmp': {}", x))?;
 
-    /* Creating the non-abstract unix socket now (and binding it last) simplifies
-     * the error handling paths slightly. */
+     
+    #[cfg(target_os = "linux")]
     let unix_socket: OwnedFd = socket::socket(
         socket::AddressFamily::Unix,
         socket::SockType::Stream,
@@ -970,9 +1009,21 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
         None,
     )
     .map_err(|x| tag!("Failed to create socket: {}", x))?;
+    #[cfg(not(target_os = "linux"))]
+    let unix_socket: OwnedFd = {
+        let s = socket::socket(
+            socket::AddressFamily::Unix,
+            socket::SockType::Stream,
+            socket::SockFlag::empty(),
+            None,
+        )
+        .map_err(|x| tag!("Failed to create socket: {}", x))?;
+        set_cloexec(&s, true)?;
+        set_nonblock(&s)?;
+        s
+    };
 
-    /* Helper function to ensure abstract_socket is dropped before the lock
-     * file is unlinked. Returns Ok(None) on non-fatal error. */
+     
     #[cfg(target_os = "linux")]
     fn bind_sockets(
         unix_socket: &OwnedFd,
@@ -1025,7 +1076,7 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
         Ok(Some(abstract_socket))
     }
 
-    /* Helper function to bind the Unix socket. Returns Ok(None) on non-fatal error. */
+     
     fn bind_unix_socket(
         unix_socket: &OwnedFd,
         x11_unix_fd: &OwnedFd,
@@ -1083,11 +1134,7 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
             nix::sys::stat::Mode::from_bits_retain(0b100100100),
         ) {
             Err(Errno::EEXIST) => {
-                /* This does not check if the process that created the lockfile
-                 * still exists and try to overwrite the lockfile if not,
-                 * because waypipe does not restart xwayland-satellite if it
-                 * crashes or is killed, and replacing the lock file could
-                 * confuse future X11 clients. */
+                 
                 debug!(
                     "Skipping X display number {}, lock file already exists",
                     display
@@ -1104,10 +1151,10 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
         let contents = write_with_buffer(&mut contents_buf, |x| {
             writeln!(x, "{: >10}", pid).expect("pid should be representable in 10 digits")
         });
-        // There is a mild race condition where another process may see the lock
-        // file before it has been written to; this could be avoided with a more complex
-        // scheme that creates and applies renameat2 + RENAME_NOREPLACE, but even that
-        // is not perfect.
+         
+         
+         
+         
         if let Err(e) = write_exact(&lock_fd, contents) {
             unistd::unlinkat(
                 &tmp_fd,
@@ -1148,7 +1195,7 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
                         x
                     )
                 })?;
-                /* Propagate errors */
+                 
                 r?;
                 continue;
             }
@@ -1174,9 +1221,7 @@ fn choose_x_display(cwd: &OwnedFd) -> Result<(XSocketInfo, XCleanup), String> {
     Err(tag!("Failed to bind a valid X display number in 0..=255"))
 }
 
-/** Try to run xwayland-satellite to connect the X display specified in `xsock` with
- * the `wayland_display` that this instance is serving.
- */
+ 
 fn spawn_xwls_handler(
     wayland_display: &OsStr,
     xsock: XSocketInfo,
@@ -1214,12 +1259,12 @@ fn spawn_xwls_handler(
         .env("WAYLAND_DISPLAY", wayland_display)
         .spawn()
         .map_err(|x| tag!("Failed to run program {:?}: {}", program, x))?;
-    /* Close both sockets */
+     
     drop(xsock);
     Ok(child)
 }
 
-/** Inner function for `run_server_multi`, used to ensure its cleanup always runs */
+ 
 fn run_server_inner(
     display_socket: &OwnedFd,
     argv0: &std::ffi::OsStr,
@@ -1245,8 +1290,7 @@ fn run_server_inner(
         command.env("DISPLAY", OsStr::from_bytes(&x_disp_buf[..len]));
     }
 
-    /* Listen to sockets before launching the program,
-     * in case it is very fast to connect */
+     
     socket::listen(&display_socket, socket::Backlog::MAXCONN)
         .map_err(|x| tag!("Failed to listen to socket: {}", x))?;
     if let Some(ref xsock) = opt_xsock {
@@ -1261,8 +1305,7 @@ fn run_server_inner(
         .spawn()
         .map_err(|x| tag!("Failed to run program {:?}: {}", command_with_args[0], x))?;
 
-    /* Block SIGCHLD _after_ spawning subprocess, to avoid having cmd_child inherit
-     * signal disposition changes; note this process should be single threaded. */
+     
     let mut mask = signal::SigSet::empty();
     mask.add(signal::SIGCHLD);
     let mut pollmask = mask
@@ -1276,7 +1319,7 @@ fn run_server_inner(
         signal::SigSet::empty(),
     );
     unsafe {
-        // SAFETY: signal handler installed is trivial
+         
         signal::sigaction(signal::Signal::SIGCHLD, &sigaction)
             .map_err(|x| tag!("Failed to set sigaction: {}", x))?;
     }
@@ -1287,12 +1330,18 @@ fn run_server_inner(
 
     'outer: loop {
         loop {
-            /* Handle any child process exits */
+             
+            #[cfg(target_os = "linux")]
             let res = wait::waitid(
                 wait::Id::All,
                 wait::WaitPidFlag::WEXITED
                     | wait::WaitPidFlag::WNOHANG
                     | wait::WaitPidFlag::WNOWAIT,
+            );
+            #[cfg(not(target_os = "linux"))]
+            let res = wait::waitpid(
+                Option::None,
+                Some(wait::WaitPidFlag::WNOHANG | wait::WaitPidFlag::WNOWAIT),
             );
             match res {
                 Ok(status) => {
@@ -1317,9 +1366,7 @@ fn run_server_inner(
                             if pid.as_raw() as u32 == xchild.id() {
                                 let _ = xchild.wait();
                                 error!("xwayland-satellite stopped early");
-                                /* Note that the lock file has not been cleaned up
-                                 * yet, ensuring X11 clients that attempt to connect
-                                 * to DISPLAY will not encounter a new X server. */
+                                 
                                 *opt_xchild = None;
                                 found = true;
                             }
@@ -1334,12 +1381,13 @@ fn run_server_inner(
                     break 'outer;
                 }
                 Err(errno) => {
+                    eprintln!("waitpid failed with unexpected error: {}", errno);
                     assert!(errno == Errno::EINTR);
                 }
             }
         }
 
-        /* Wait for SIGCHLD or action */
+         
         let (mut pfds_with_xsock, mut pfds_base) = if let Some(ref xsock) = opt_xsock {
             (
                 Some([
@@ -1363,7 +1411,10 @@ fn run_server_inner(
             pfds_base.as_mut().unwrap()
         };
 
+        #[cfg(target_os = "linux")]
         let res = nix::poll::ppoll(pfds, None, Some(pollmask));
+        #[cfg(not(target_os = "linux"))]
+        let res = nix::poll::poll(pfds, nix::poll::PollTimeout::NONE);
         if let Err(errno) = res {
             assert!(errno == Errno::EINTR || errno == Errno::EAGAIN);
             continue;
@@ -1393,9 +1444,7 @@ fn run_server_inner(
             match spawn_xwls_handler(display_short, xsock) {
                 Ok(c) => *opt_xchild = Some(c),
                 Err(e) => {
-                    /* Only log the error instead of aborting, so that a failure
-                     * to start xwayland-satellite for a new X11 connection does
-                     * not affect current or future Wayland clients. */
+                     
                     error!(
                         "Failed to start xwayland-satellite to handle new X11 connection: {:?}",
                         e
@@ -1405,14 +1454,14 @@ fn run_server_inner(
         }
 
         if has_wayland_conn {
-            /* We have a connection */
+             
             debug!("Connection received");
 
             let res = socket::accept(display_socket.as_raw_fd());
             match res {
                 Ok(conn_fd) => {
                     let wrapped_fd = unsafe {
-                        // SAFETY: freshly created file descriptor, exclusively captured here
+                         
                         OwnedFd::from_raw_fd(conn_fd)
                     };
                     set_blocking(&wrapped_fd)?;
@@ -1425,8 +1474,8 @@ fn run_server_inner(
                 }
                 Err(errno) => {
                     assert!(errno != Errno::EBADF && errno != Errno::EINVAL);
-                    // This can fail for a variety of reasons, including OOM
-                    // and the connection being aborted
+                     
+                     
                     debug!("Failed to receive connection");
                 }
             }
@@ -1436,7 +1485,7 @@ fn run_server_inner(
     Ok(cmd_child)
 }
 
-/** `waypipe-server` logic for the multiple connection case */
+ 
 fn run_server_multi(
     command: &[&std::ffi::OsStr],
     argv0: &std::ffi::OsStr,
@@ -1456,7 +1505,9 @@ fn run_server_multi(
     let (display_socket, sock_cleanup) = unix_socket_create_and_bind(
         &PathBuf::from(display),
         cwd,
-        socket::SockFlag::SOCK_NONBLOCK | socket::SockFlag::SOCK_CLOEXEC,
+         
+        true,  
+        true,  
     )?;
 
     let (mut opt_x, mut opt_cleanup) = (None, None);
@@ -1477,14 +1528,11 @@ fn run_server_multi(
         &mut xwls_child,
         &mut connections,
     );
-    /* Unlink the X socket if one was created */
+     
     drop(opt_cleanup);
 
     if let Some(mut child) = xwls_child {
-        /* xwayland-satellite has no means to communicate that there are no longer
-         * any clients connected to it, so waypipe cannot practically wait for those
-         * to detach like it can for Wayland connections; therefore, kill it when
-         * the command being run exits */
+         
         if let Err(e) = child.kill() {
             debug!(
                 "Failed to send kill signal to xwayland-satellite subprocess: {:?}",
@@ -1499,7 +1547,7 @@ fn run_server_multi(
         }
     }
 
-    /* Unlink the connection socket that was used */
+     
     let sock_err = if unlink_at_end {
         if let SocketSpec::Unix(p) = socket_path {
             nix::unistd::unlink(p).map_err(|x| tag!("Failed to unlink socket: {}", x))
@@ -1509,7 +1557,7 @@ fn run_server_multi(
     } else {
         Ok(())
     };
-    /* Unlink the Wayland display socket that was created */
+     
     drop(sock_cleanup);
     if let Err(err) = res {
         if let Err(e) = sock_err {
@@ -1520,13 +1568,13 @@ fn run_server_multi(
     sock_err?;
 
     debug!("Shutting down");
-    // Wait for subprocesses to
+     
     wait_for_connnections(connections);
     debug!("Done");
     Ok(())
 }
 
-/** `waypipe-client` logic for the single connection case */
+ 
 fn run_client_oneshot(
     command: Option<&[&std::ffi::OsStr]>,
     options: &Options,
@@ -1535,12 +1583,12 @@ fn run_client_oneshot(
     cwd: &OwnedFd,
 ) -> Result<(), String> {
     let (channel_socket, sock_cleanup) =
-        socket_create_and_bind(socket_path, cwd, socket::SockFlag::SOCK_CLOEXEC)?;
+        socket_create_and_bind(socket_path, cwd,   false, true)?;
 
     socket::listen(&channel_socket, socket::Backlog::new(1).unwrap())
         .map_err(|x| tag!("Failed to listen to socket: {}", x))?;
 
-    /* After the socket has been created, start ssh if necessary */
+     
     let mut cmd_child: Option<std::process::Child> = None;
     if let Some(command_seq) = command {
         cmd_child = Some(
@@ -1557,7 +1605,7 @@ fn run_client_oneshot(
         match res {
             Ok(conn_fd) => {
                 break unsafe {
-                    // SAFETY: freshly created file descriptor, exclusively captured here
+                     
                     OwnedFd::from_raw_fd(conn_fd)
                 };
             }
@@ -1570,8 +1618,7 @@ fn run_client_oneshot(
     set_cloexec(&link_fd, true)?;
     set_blocking(&link_fd)?;
 
-    /* Now that ssh has connected to the socket, it can safely be removed
-     * from the file system */
+     
     drop(sock_cleanup);
 
     handle_client_conn(link_fd, wayland_fd, options)?;
@@ -1586,10 +1633,10 @@ fn run_client_oneshot(
     Ok(())
 }
 
-/** No-op signal handler (used to ensure SIGCHLD interrupts poll) */
+ 
 extern "C" fn noop_signal_handler(_: i32) {}
 
-/** Inner function for `run_client_multi`, used to ensure its cleanup always runs */
+ 
 fn run_client_inner(
     channel_socket: &OwnedFd,
     command: Option<&[&OsStr]>,
@@ -1600,7 +1647,7 @@ fn run_client_inner(
     socket::listen(&channel_socket, socket::Backlog::MAXCONN)
         .map_err(|x| tag!("Failed to listen to socket: {}", x))?;
 
-    /* Only run ssh once the necessary socket to forward has been set up */
+     
     let mut cmd_child: Option<std::process::Child> = None;
     if let Some(command_seq) = command {
         cmd_child = Some(
@@ -1613,8 +1660,7 @@ fn run_client_inner(
         );
     }
 
-    /* Block SIGCHLD _after_ spawning subprocess, to avoid having cmd_child inherit
-     * signal disposition changes; note this process should be single threaded. */
+     
     let mut mask = signal::SigSet::empty();
     mask.add(signal::SIGCHLD);
     let mut pollmask = mask
@@ -1628,26 +1674,30 @@ fn run_client_inner(
         signal::SigSet::empty(),
     );
     unsafe {
-        // SAFETY: signal handler installed is trivial
+         
         signal::sigaction(signal::Signal::SIGCHLD, &sigaction)
             .map_err(|x| tag!("Failed to set sigaction: {}", x))?;
     }
 
-    /* Collect path to self now, instead of later, for use when spawning subprocesses.
-     * (When the executable is deleted, /proc/self/exe is modified with a " (deleted)"
-     * suffix, so identifying the executable path could fail.) */
+     
     let self_path = env::current_exe()
         .map_err(|x| tag!("Failed to lookup path to own executable: {}", x))?
         .into_os_string();
 
     'outer: loop {
-        /* Handle any child process exits (including the case where cmd_child exited immediately)*/
+         
         loop {
+            #[cfg(target_os = "linux")]
             let res = wait::waitid(
                 wait::Id::All,
                 wait::WaitPidFlag::WEXITED
                     | wait::WaitPidFlag::WNOHANG
                     | wait::WaitPidFlag::WNOWAIT,
+            );
+            #[cfg(not(target_os = "linux"))]
+            let res = wait::waitpid(
+                Option::None,
+                Some(wait::WaitPidFlag::WNOHANG),
             );
             match res {
                 Ok(status) => match status {
@@ -1679,19 +1729,23 @@ fn run_client_inner(
                     }
                 },
                 Err(Errno::ECHILD) => {
-                    /* no children to wait for; can happen if no command is run */
+                     
                     break;
                 }
                 Err(errno) => {
+                    eprintln!("waitpid failed at 1793 with: {}", errno);
                     assert!(errno == Errno::EINTR);
                     break;
                 }
             }
         }
 
-        /* Wait for SIGCHLD or socket connection */
+         
         let mut pfds = [PollFd::new(channel_socket.as_fd(), PollFlags::POLLIN)];
+        #[cfg(target_os = "linux")]
         let res = nix::poll::ppoll(&mut pfds, None, Some(pollmask));
+        #[cfg(not(target_os = "linux"))]
+        let res = nix::poll::poll(&mut pfds, nix::poll::PollTimeout::NONE);
         if let Err(errno) = res {
             assert!(errno == Errno::EINTR || errno == Errno::EAGAIN);
             continue;
@@ -1706,16 +1760,16 @@ fn run_client_inner(
             continue;
         }
 
-        /* We have a connection */
+         
         debug!("Connection received");
 
         let res = socket::accept(channel_socket.as_raw_fd());
         match res {
             Ok(conn_fd) => {
-                // note: since no reconnection is done, we do not need to
-                // keep track of a subprocess
+                 
+                 
                 let wrapped_fd = unsafe {
-                    // SAFETY: freshly created file descriptor, exclusively captured here
+                     
                     OwnedFd::from_raw_fd(conn_fd)
                 };
 
@@ -1733,8 +1787,8 @@ fn run_client_inner(
             }
             Err(errno) => {
                 assert!(errno != Errno::EBADF && errno != Errno::EINVAL);
-                // This can fail for a variety of reasons, including OOM
-                // and the connection being aborted
+                 
+                 
                 debug!("Failed to receive connection");
             }
         }
@@ -1742,7 +1796,7 @@ fn run_client_inner(
     Ok(cmd_child)
 }
 
-/** `waypipe-client` logic for the multiple connection case */
+ 
 fn run_client_multi(
     command: Option<&[&std::ffi::OsStr]>,
     options: &Options,
@@ -1763,7 +1817,9 @@ fn run_client_multi(
     let (channel_socket, sock_cleanup) = socket_create_and_bind(
         socket_path,
         cwd,
-        socket::SockFlag::SOCK_NONBLOCK | socket::SockFlag::SOCK_CLOEXEC,
+         
+        true,
+        true,
     )?;
 
     let mut connections = BTreeMap::new();
@@ -1792,7 +1848,7 @@ fn run_client_multi(
     Ok(())
 }
 
-/** Main logic for `waypipe client` */
+ 
 fn run_client(
     command: Option<&[&std::ffi::OsStr]>,
     opts: &Options,
@@ -1844,8 +1900,7 @@ fn run_client(
     }
 }
 
-/** Connect to upstream Wayland compositor, create a security context,
- * and return the path to the security context's socket */
+ 
 fn setup_secctx(
     cwd: &OwnedFd,
     app_id: &str,
@@ -1863,7 +1918,9 @@ fn setup_secctx(
     let (sock, sock_cleanup) = unix_socket_create_and_bind(
         &secctx_sock_path,
         cwd,
-        socket::SockFlag::SOCK_NONBLOCK | socket::SockFlag::SOCK_CLOEXEC,
+         
+        true,
+        true,
     )?;
 
     socket::listen(&sock, socket::Backlog::MAXCONN)
@@ -1882,8 +1939,19 @@ fn setup_secctx(
     fcntl::fcntl(&wayland_conn, fcntl::FcntlArg::F_SETFL(flags))
         .map_err(|x| tag!("Failed to set wayland socket flags: {}", x))?;
 
+    #[cfg(target_os = "linux")]
     let (close_r, close_w) = unistd::pipe2(fcntl::OFlag::O_CLOEXEC | fcntl::OFlag::O_NONBLOCK)
         .map_err(|x| tag!("Failed to create pipe: {:?}", x))?;
+    #[cfg(not(target_os = "linux"))]
+    let (close_r, close_w) = {
+        let (r, w) = unistd::pipe().map_err(|x| tag!("Failed to create pipe: {:?}", x))?;
+        use nix::fcntl;
+        let _ = fcntl::fcntl(&r, fcntl::FcntlArg::F_SETFD(fcntl::FdFlag::FD_CLOEXEC));
+        let _ = fcntl::fcntl(&w, fcntl::FcntlArg::F_SETFD(fcntl::FdFlag::FD_CLOEXEC));
+        let _ = fcntl::fcntl(&r, fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK));
+        let _ = fcntl::fcntl(&w, fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK));
+        (r, w)
+    };
 
     secctx::provide_secctx(wayland_conn, app_id, sock, close_r)?;
 
@@ -1891,47 +1959,46 @@ fn setup_secctx(
     Ok((secctx_sock_path.into_os_string(), sock_cleanup, close_w))
 }
 
-/** Identify the index of the hostname in ssh_args, and detect
- * whether ssh will force pseudo-terminal allocation */
+ 
 fn locate_openssh_cmd_hostname(ssh_args: &[&OsStr]) -> Result<(usize, bool), String> {
-    /* Based on command line help for openssh 8.0 and 9.7 */
-    // let fix_letters = b"46AaCfGgKkMNnqsTtVvXxYy";
+     
+     
     let arg_letters = b"BbcDEeFIiJLlmOopQRSWw";
     let mut dst_idx = 0;
     let mut allocates_pty = false;
-    /* Note: a valid hostname never has a - prefix */
+     
     while dst_idx < ssh_args.len() {
         let base_arg: &[u8] = ssh_args[dst_idx].as_encoded_bytes();
         if !base_arg.starts_with(b"-") {
-            /* Not an argument, must be hostname */
+             
             break;
         }
         if base_arg.len() == 1 {
             return Err(tag!("Failed to parse arguments after ssh: single '-'?"));
         }
         if base_arg == [b'-', b'-'] {
-            /* No arguments after -- */
+             
             dst_idx += 1;
             break;
         }
-        // loop over letters; fix*  arg ( value )
+         
         for i in 1..base_arg.len() {
             if arg_letters.contains(&base_arg[i]) {
                 if i == base_arg.len() - 1 {
-                    // Value is next argument
+                     
                     dst_idx += 1;
                 } else {
-                    // Value is tail of this arguent
+                     
                 }
             } else if base_arg[i] == b't' {
                 allocates_pty = true;
             } else if base_arg[i] == b'T' {
                 allocates_pty = false;
             } else {
-                /* All other letters interpreted as fixed arg letters */
+                 
             }
         }
-        // Eat this argument
+         
         dst_idx += 1;
     }
     if dst_idx >= ssh_args.len() || ssh_args[dst_idx].as_encoded_bytes().starts_with(b"-") {
@@ -1959,7 +2026,7 @@ fn test_ssh_parsing() {
     }
 }
 
-// an available/unavailable list could be constructed if #[cfg] where to apply to expressions
+ 
 const VERSION_STRING_CARGO: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\nfeatures:",
@@ -1972,13 +2039,13 @@ const VERSION_STRING_CARGO: &str = concat!(
     "\n  video: ",
     cfg!(feature = "video"),
 );
-/** String providing Waypipe's version and which features it has */
+ 
 pub const VERSION_STRING: &str = match option_env!("WAYPIPE_VERSION") {
     Some(x) => x,
     None => VERSION_STRING_CARGO,
 };
 
-/** Main entrypoint */
+ 
 fn main() -> Result<(), String> {
     let command = Command::new(env!("CARGO_PKG_NAME"))
         .disable_help_subcommand(true)
@@ -1999,20 +2066,20 @@ fn main() -> Result<(), String> {
             Command::new("ssh")
                 .about("Wrap an ssh invocation to run Waypipe on both ends of the connection, and\nautomatically forward Wayland applications")
                 .disable_help_flag(true)
-                // collect all following arguments
+                 
                 .arg(Arg::new("ssh_args").num_args(0..).trailing_var_arg(true).allow_hyphen_values(true).help("Arguments for ssh"))
         ).subcommand(
             Command::new("server")
             .about("Run remotely to run a process and forward application data through a socket\nto a matching `waypipe client` instance")
             .disable_help_flag(true)
-            // collect all following arguments as the command
+             
             .arg(Arg::new("command").num_args(0..).trailing_var_arg(true).help("Command to execute")
             .allow_hyphen_values(true) )
         ).subcommand(
             Command::new("client")
                 .disable_help_flag(true)
                 .about("Run locally to set up a Unix socket that `waypipe server` can connect to")
-                // forbid all following arguments
+                 
         ).subcommand(
             Command::new("bench")
                 .about("Estimate the best compression level used to send data, for each bandwidth")
@@ -2067,7 +2134,7 @@ fn main() -> Result<(), String> {
                   - ssh: sets the prefix for client and server socket paths\n\
                   - vsock: [[s]CID:]port",
                 )
-                // todo: decide value parser based on --vsock flag?
+                 
                 .value_parser(value_parser!(OsString)),
         )
         .arg(
@@ -2384,20 +2451,18 @@ fn main() -> Result<(), String> {
         test_no_binary_semaphore_import,
     };
 
-    /* Needed to revert back to original cwdir after
-     * changes made to possibly open sockets with a >108 byte path length. */
+     
     let cwd: OwnedFd = open_folder(&PathBuf::from("."))?;
 
-    /* If WAYLAND_SOCKET was set, extract the socket now, ensuring it is only done once */
+     
     let wayland_socket = if let Some(wayl_sock) = get_wayland_socket_id()? {
         let fd = unsafe {
-            // SAFETY: relies on external promise that value is a Wayland connection fd,
-            // and not something else (like of STDIN/STDOUT/STDRRR). Exclusive, because
-            // this is the only place WAYLAND_SOCKET is extracted
+             
+             
+             
             OwnedFd::from_raw_fd(RawFd::from(wayl_sock))
         };
-        /* Ensure spawned processes cannot inherit the socket. (All spawned processes have
-         * the environment variable WAYLAND_SOCKET cleared, so cannot detect it.) */
+         
         set_cloexec(&fd, true)?;
         Some(fd)
     } else {
@@ -2414,7 +2479,7 @@ fn main() -> Result<(), String> {
             let subargs = submatch.get_raw("ssh_args");
             let ssh_args: Vec<&std::ffi::OsStr> = subargs.unwrap_or_default().collect();
             let (destination_idx, _) = locate_openssh_cmd_hostname(&ssh_args)?;
-            /* Login shell required if there are no arguments following the ssh destination */
+             
             let needs_login_shell = destination_idx == ssh_args.len() - 1;
 
             let rand_tag = get_rand_tag()?;
@@ -2640,21 +2705,19 @@ fn main() -> Result<(), String> {
                 .and_then(|x| x.parse::<i32>().ok())
                 .ok_or_else(|| tag!("Failed to parse connection fd"))?;
 
-            // Capture inherited fd from environment variable
-            // Must only call connect_to_upstream() once, at risk of closing random fd
+             
+             
             let wayland_fd = unsafe {
-                // SAFETY: relies on internal promise that value is a Wayland connection fd,
-                // and not a random integer. Exclusive, because this is the only time
-                // WAYPIPE_CONNECTION_FD is read from in this branch
+                 
+                 
+                 
                 OwnedFd::from_raw_fd(RawFd::from(opt_fd))
             };
 
             set_cloexec(&wayland_fd, true)?;
 
             let link_fd = if let Some(s) = wayland_socket {
-                /* For test use: provide the upstream Waypipe connection through WAYLAND_SOCKET.
-                 * (To reduce the risk of unexpected connections, the downstream Wayland connection
-                 * used WAYPIPE_CONNECTION_FD.) */
+                 
                 s
             } else {
                 socket_connect(
@@ -2678,14 +2741,14 @@ fn main() -> Result<(), String> {
                 .and_then(|x| x.parse::<i32>().ok())
                 .ok_or("Failed to parse connection fd")?;
             let link_fd = unsafe {
-                // SAFETY: relies on internal promise that value is a Wayland connection fd,
-                // and not a random integer. Exclusive, because this is the only time
-                // WAYPIPE_CONNECTION_FD is read from in this branch
+                 
+                 
+                 
                 OwnedFd::from_raw_fd(RawFd::from(opt_fd))
             };
 
             let wayland_fd = if let Some(s) = wayland_socket {
-                /* For test use: provide the Wayland connection through WAYLAND_SOCKET */
+                 
                 s
             } else {
                 connect_to_wayland_display(&cwd)?

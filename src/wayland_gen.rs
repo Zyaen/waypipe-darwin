@@ -1,4 +1,4 @@
-/*! Wayland protocol interface and method data and functions. Code automatically generated from protocols/ folder. */
+ 
 #![allow(clippy::all, dead_code)]
 use crate::wayland::WaylandArgument::*;
 use crate::wayland::*;

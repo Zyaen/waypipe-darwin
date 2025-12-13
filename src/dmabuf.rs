@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Support for DMABUFs and timeline semaphores (using Vulkan) */
+ 
+ 
 #![cfg(feature = "dmabuf")]
 use crate::platform::*;
 use crate::tag;
@@ -17,7 +17,7 @@ use std::path::Path;
 use std::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/** Properties of a specific format+modifier combination */
+ 
 #[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ModifierData {
     pub plane_count: u32,
@@ -25,33 +25,30 @@ pub struct ModifierData {
     pub max_size_store_and_sample: Option<(u32, u32)>,
 }
 
-/** A list of modifiers and associated metadata. */
+ 
 #[derive(Debug)]
 pub struct FormatData {
-    /** The message handling logic generally only needs the list which modifiers
-     * are available, so store these separately to provide &[u64] access. */
+     
     pub modifiers: Vec<u64>,
-    /** A list matching 'modifiers'. */
+     
     modifier_data: Vec<ModifierData>,
 }
 
-/** Structure holding a queue and associated mutable metadata */
+ 
 pub struct VulkanQueue {
-    /** Queue object, for which access must be externally synchronized */
+     
     pub queue: vk::Queue,
-    /** The last semaphore value planned to be signalled by a submission to the queue */
+     
     pub last_semaphore_value: u64,
 }
 
-/** MutexGuard for a VulkanQueue.
- *
- * Unlocks the ffmpeg lock for the queue when dropped. */
+ 
 pub struct VulkanQueueGuard<'a> {
     pub inner: MutexGuard<'a, VulkanQueue>,
     vulk: &'a VulkanDevice,
 }
 
-/** A Vulkan entrypoint, instance, and associated information. */
+ 
 pub struct VulkanInstance {
     entry: Entry,
     instance: Instance,
@@ -59,27 +56,23 @@ pub struct VulkanInstance {
     physdevs: Vec<DeviceInfo>,
 }
 
-/** A Vulkan logical device, with its associated state, main queue and timeline semaphore,
- * extensions, and cached properties. */
+ 
 pub struct VulkanDevice {
     _instance: Arc<VulkanInstance>,
 
     dev_info: DeviceInfo,
-    /** Queue family indices. Order: [compute+transfer, graphics+transfer, encode, decode] */
+     
     qfis: [u32; 4],
 
-    /** Timeline semaphore; when it reaches 'queue.last_semaphore_value', all preceding work using
-     * the semaphore is done */
+     
     pub semaphore: vk::Semaphore,
-    /** DRM handle and event_fd exported from [VulkanDevice::semaphore], for easy access from main loop */
+     
     semaphore_external: Option<VulkanExternalTimelineSemaphore>,
     drm_fd: OwnedFd,
     #[cfg(feature = "video")]
     pub video: Option<VulkanVideo>,
 
-    /** The compute+transfer queue to use. Do NOT access via queue.lock() -- use
-     * vulkan_lock_queue() instead, to also ensure ffmpeg is locked out of using
-     * the queue. */
+     
     queue: Mutex<VulkanQueue>,
     pub dev: Device,
     get_modifier: ext::image_drm_format_modifier::Device,
@@ -89,7 +82,7 @@ pub struct VulkanDevice {
     pub timeline_semaphore: khr::timeline_semaphore::Device,
     ext_semaphore_fd: khr::external_semaphore_fd::Device,
 
-    pub formats: BTreeMap<vk::Format, FormatData>, // todo: the set of possible formats is small and known at compile time; use a table and perfect hashing instead?
+    pub formats: BTreeMap<vk::Format, FormatData>,  
     device_id: u64,
     pub queue_family: u32,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -101,111 +94,105 @@ pub enum VulkanImageParameterMismatch {
     Size((u32, u32)),
 }
 
-/** The associated drm handle/eventfd associated with a timeline semaphore, which can be
- * used to wait for updates on it.
- *
- * [Drop] has not been implemented for this type; it must be destroyed by the containing struct.
- */
+ 
 struct VulkanExternalTimelineSemaphore {
     drm_handle: u32,
     event_fd: OwnedFd,
 }
 
-/** A Vulkan timeline semaphore and the eventfd used to wait for updates on it */
+ 
 pub struct VulkanTimelineSemaphore {
     pub vulk: Arc<VulkanDevice>,
     pub semaphore: vk::Semaphore,
     external: VulkanExternalTimelineSemaphore,
 }
 
-/** A sync file (e.g.: exported from a DMABUF, for implicit sync) */
+ 
 pub struct VulkanSyncFile {
     vulk: Arc<VulkanDevice>,
     fd: OwnedFd,
 }
 
-/** A binary semaphore (e.g.: resulting from DMABUF's exported implicit sync file) */
+ 
 pub struct VulkanBinarySemaphore {
     vulk: Arc<VulkanDevice>,
     pub semaphore: vk::Semaphore,
 }
 
-/** A Vulkan command pool */
+ 
 pub struct VulkanCommandPool {
     pub vulk: Arc<VulkanDevice>,
     pub pool: Mutex<vk::CommandPool>,
 }
 
-/** Mutable state for a [VulkanDmabuf] */
+ 
 pub struct VulkanDmabufInner {
-    // TODO: need to store metadata about all pending operations to the dmabuf
+     
     pub image_layout: vk::ImageLayout,
 }
 
-/** Structure for a Vulkan image imported from/exported to a DMABUF */
+ 
 pub struct VulkanDmabuf {
-    // No RefCell -- unsafe is used throughout anyway, exclusivity is not needed, and no recursion should be done
+     
     pub vulk: Arc<VulkanDevice>,
 
     pub image: vk::Image,
-    // todo: store memory, to be able to free it properly when the VulkanDmabuf is dropped?
-    // also: the file descriptors probably have a separate lifespan; check this
+     
+     
     pub width: u32,
     pub height: u32,
-    // note: the drm_format should never be needed after casting to nearest Vulkan approximation
+     
     pub vk_format: vk::Format,
 
-    /* True iff vkImage was created with storage and sample usage */
+     
     pub can_store_and_sample: bool,
 
-    // todo: use a <=4 vector size optimization without any heap allocation
-    memory_planes: Vec<(vk::DeviceMemory, u32, u32)>, /* mem / offset / stride */
+     
+    memory_planes: Vec<(vk::DeviceMemory, u32, u32)>,  
 
-    /** In order to extract sync files for implicit synchronization, and to poll the implicit
-     * fences if sync file extraction is not supported, store a copy of the DMABUF fd.
-     * (This may need to be changed to support disjoint multi-planar images.) */
+     
     pub main_fd: OwnedFd,
 
     pub inner: Mutex<VulkanDmabufInner>,
 }
 
-/** Data for a [VulkanBuffer] which is mutable or requires exclusive access. */
+ 
 struct VulkanBufferInner {
     data: *mut c_void,
     reader_count: usize,
     has_writer: bool,
 }
 
-/** A mapped staging buffer, either for use when reading or writing data */
+ 
 pub struct VulkanBuffer {
     pub vulk: Arc<VulkanDevice>,
 
-    // todo: central handling of vk::Buffer objects, to allow bump-allocating
-    // segments from a larger central buffer.
+     
+     
     pub buffer: vk::Buffer,
     mem: vk::DeviceMemory,
 
     pub memory_len: u64,
     pub buffer_len: u64,
-    /* Mutex-wrapped to ensure only one referent can read/write from data at a time */
+     
     inner: Mutex<VulkanBufferInner>,
 }
 unsafe impl Send for VulkanBuffer {}
 unsafe impl Sync for VulkanBuffer {}
 
-/** Handle storing (and keeping alive) command buffer for a transfer between a [VulkanBuffer] and a [VulkanDmabuf] */
+ 
 pub struct VulkanCopyHandle {
     vulk: Arc<VulkanDevice>,
-    /* Copy operation is between these two objects */
+     
     _image: Arc<VulkanDmabuf>,
     _buffer: Arc<VulkanBuffer>,
     pool: Arc<VulkanCommandPool>,
 
-    // note: not safe to reuse unless image is still alive
+     
 
-    // TODO: not safe to free a 'pending' command buffer; give Vulkan itself a list of copy-handles?
+     
     cb: vk::CommandBuffer,
-    // on the queue's timeline semaphore
+     
     completion_time_point: u64,
 }
 
@@ -224,12 +211,12 @@ impl Drop for VulkanDevice {
                 if let Some(ref v) = self.video {
                     destroy_video(&self.dev, v);
                 }
-                /* Drop video, if present */
+                 
                 self.video = None;
             }
 
-            // These are probably only safe if operations using them have completed; need
-            // a centralized registry
+             
+             
             self.dev.destroy_semaphore(self.semaphore, None);
             self.dev.destroy_device(None);
         }
@@ -255,7 +242,7 @@ impl Drop for VulkanDmabuf {
                 self.vulk.dev.free_memory(*mem, None);
             }
         }
-        // The Arc<VulkanDevice>> should keep Vulkan alive until after VulkanDmabuf is dropped
+         
     }
 }
 
@@ -263,10 +250,10 @@ impl Drop for VulkanTimelineSemaphore {
     fn drop(&mut self) {
         unsafe {
             drm_syncobj_destroy(&self.vulk.drm_fd, self.external.drm_handle).unwrap();
-            // SAFETY: only if semaphore is not being used
+             
             self.vulk.dev.destroy_semaphore(self.semaphore, None);
 
-            // event_fd cleanup is automatic
+             
         }
     }
 }
@@ -274,7 +261,7 @@ impl Drop for VulkanTimelineSemaphore {
 impl Drop for VulkanBinarySemaphore {
     fn drop(&mut self) {
         unsafe {
-            // SAFETY: only if semaphore is not being used
+             
             self.vulk.dev.destroy_semaphore(self.semaphore, None);
         }
     }
@@ -295,7 +282,7 @@ impl Drop for VulkanCopyHandle {
     fn drop(&mut self) {
         let cmd_pool = self.pool.pool.lock().unwrap();
         unsafe {
-            /* Verify that the command buffer execution has completed; if not, panic, as it's a program error */
+             
             if let Ok(counter) = self
                 .vulk
                 .timeline_semaphore
@@ -326,10 +313,9 @@ impl std::fmt::Display for VulkanImageParameterMismatch {
     }
 }
 
-/** Function to use to lock the main queue; will ensure queue is also locked
- * for ffmpeg, if video encoding/decoding is enabled. */
+ 
 pub fn vulkan_lock_queue(vulk: &VulkanDevice) -> VulkanQueueGuard<'_> {
-    /* Lock order: vulk.queue before video lock */
+     
     let inner = vulk.queue.lock().unwrap();
     #[cfg(feature = "video")]
     if let Some(ref v) = vulk.video {
@@ -350,49 +336,35 @@ impl Drop for VulkanQueueGuard<'_> {
     }
 }
 
-/** Check whether a given extension is available in the list with the given version. */
+ 
 fn exts_has_prop(exts: &[vk::ExtensionProperties], name: &CStr, version: u32) -> bool {
     exts.iter()
         .any(|x| x.extension_name_as_c_str().unwrap() == name && x.spec_version >= version)
 }
 
-/** Additional information for Vulkan formats */
+ 
 pub struct FormatLayoutInfo {
     pub bpp: u32,
     pub planes: usize,
-    // TODO: while the number of _memory_ planes can be looked up by modifier
-    // (e.g., to account for CCS planes), need to track number of logical planes
-    // (e.g.: vk::ImageAspectFlags::PLANE_0 vs vk::ImageAspectFlags::MEMORY_PLANE_0_EXT)
+     
+     
+     
 
-    // todo: subsampling in vulkan requires width/height to be multiples of 2 sometimes;
-    // would need to bump up canonical size to match
+     
+     
 }
 
-// TODO: determine if it is worth it to deduplicate shm and dmabuf format information.
-// (the code pathways will probably become very different.)
+ 
+ 
 
-/** List of Vulkan formats which Waypipe supports.
- *
- * Channel interpretations _usually_ do not affect processing; given a linear
- * layout it shouldn't matter which channel is R and which is B as long as the
- * transfer operations (vkCmdCopyImageToBuffer, etc.) preserve the order.
- *
- * However, the DMABUF layout may depend on the precise (format, modifier) pair and
- * so buffers should be imported/exported using the closest matching Vulkan format.
- * In particular, DRM_FORMAT_ABGR8888 should use R8G8B8A8_UNORM, and
- * DRM_FORMAT_ARGB8888 should use B8G8R8A8_UNORM. It is possible that a driver
- * implements both ABGR and ARGB buffers using a fixed ABGR memory layout (using
- * the format value to determine whether to swap R and B channels when transferring
- * the data to a buffer, instead of just copying raw data as would occur with a naive
- * linear layout). As a result, it is _not_ safe in general to import or export
- * a DRM format using anything but the exact corresponding Vulkan format. */
+ 
 const SUPPORTED_FORMAT_LIST: &[vk::Format] = &[
     vk::Format::R4G4B4A4_UNORM_PACK16,
     vk::Format::B4G4R4A4_UNORM_PACK16,
-    // vk::Format::A4R4G4B4_UNORM_PACK16_EXT, A4B4G4R4_UNORM_PACK16_EXT require VK_EXT_4444_formats or Vulkan 1.3
+     
     vk::Format::R5G6B5_UNORM_PACK16,
     vk::Format::B5G6R5_UNORM_PACK16,
-    // vk::Format::A1B5G5R5_UNORM_PACK16_KHR, // requires VK_KHR_maintenance5 or Vulkan 1.4.
+     
     vk::Format::A1R5G5B5_UNORM_PACK16,
     vk::Format::B5G5R5A1_UNORM_PACK16,
     vk::Format::R5G5B5A1_UNORM_PACK16,
@@ -411,7 +383,7 @@ const SUPPORTED_FORMAT_LIST: &[vk::Format] = &[
     vk::Format::G8_B8_R8_3PLANE_444_UNORM,
 ];
 
-/** Get properties of a [vk::Format] */
+ 
 pub fn get_vulkan_info(f: vk::Format) -> FormatLayoutInfo {
     match f {
         vk::Format::R4G4B4A4_UNORM_PACK16
@@ -449,9 +421,7 @@ pub fn get_vulkan_info(f: vk::Format) -> FormatLayoutInfo {
     }
 }
 
-/** Convert a Wayland fourcc format code to a DRM format code.
- *
- * Wayland and DRM differ in encodings for Argb8888 and Xrgb8888 only */
+ 
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test_proto"))]
 pub const fn wayland_to_drm(wl_format: WlShmFormat) -> u32 {
@@ -462,23 +432,19 @@ pub const fn wayland_to_drm(wl_format: WlShmFormat) -> u32 {
     }
 }
 
-/** Convert a DRM fourcc format to a canonical Vulkan format with an equivalent layout
- * (but possibly different channel names -- those can be either ignored or fixed by swizzling.)
- *
- * (The other direction is not well defined, because _multiple_ DRM formats may map
- * onto a Vulkan format.) */
+ 
 pub fn drm_to_vulkan(drm_format: u32) -> Option<vk::Format> {
     use WlShmFormat::*;
     if drm_format == 0 || drm_format == 1 {
-        /* not a DRM format, and clients should not send this for DMABUFs */
+         
         return None;
     }
 
-    /* First, convert to Wayland format */
+     
     let shm_format = if let Ok(shm_format) = drm_format.try_into() {
         shm_format
     } else {
-        /* Unfortunately wayland uses different values for Argb8888, Xrgb8888 */
+         
         if drm_format == fourcc('A', 'R', '2', '4') {
             Argb8888
         } else if drm_format == fourcc('X', 'R', '2', '4') {
@@ -487,10 +453,10 @@ pub fn drm_to_vulkan(drm_format: u32) -> Option<vk::Format> {
             return None;
         }
     };
-    // TODO: is it safe to bundle multiple original channels into one? e.g. RGB233 => R8_UNORM
-    // TODO: UNORM vs interpreting everything as UINT
+     
+     
 
-    /* 8-bit RGB, the endianness-independent formats */
+     
     match shm_format {
         R8 => return Some(vk::Format::R8_UNORM),
         Gr88 => return Some(vk::Format::R8G8_UNORM),
@@ -498,21 +464,17 @@ pub fn drm_to_vulkan(drm_format: u32) -> Option<vk::Format> {
         Bgr888 => return Some(vk::Format::R8G8B8_UNORM),
         Abgr8888 | Xbgr8888 => return Some(vk::Format::R8G8B8A8_UNORM),
         Argb8888 | Xrgb8888 => return Some(vk::Format::B8G8R8A8_UNORM),
-        /* Bgra/Rgba/Ayuv/Xyuv-type have no direct analogue and using
-         * R8G8B8A8_UNORM/B8G8R8A8_UNORM for either could potentially cause
-         * channel swaps on import */
+         
         _ => (),
     }
 
-    /* Vulkan physical device endianness matches host endianness, while the Wayland and
-     * DRM formats are endianness-independent (typically little-endian). To keep things simple,
-     * on big endian systems, only permit formats with endianness-independent layout. */
+     
     if cfg!(not(target_endian = "little")) {
         return None;
     }
 
     Some(match shm_format {
-        /* Packed formats */
+         
         Rgba4444 | Rgbx4444 => vk::Format::R4G4B4A4_UNORM_PACK16,
         Bgra4444 | Bgrx4444 => vk::Format::B4G4R4A4_UNORM_PACK16,
 
@@ -524,17 +486,17 @@ pub fn drm_to_vulkan(drm_format: u32) -> Option<vk::Format> {
         Bgra5551 | Bgrx5551 => vk::Format::B5G5R5A1_UNORM_PACK16,
         Rgba5551 | Rgbx5551 => vk::Format::R5G5B5A1_UNORM_PACK16,
 
-        /* 10-bit RGB */
+         
         Argb2101010 | Xrgb2101010 => vk::Format::A2R10G10B10_UNORM_PACK32,
         Abgr2101010 | Xbgr2101010 => vk::Format::A2B10G10R10_UNORM_PACK32,
 
-        /* 16-bit RGB */
+         
         R16 => vk::Format::R16_UNORM,
         Gr1616 => vk::Format::R16G16_UNORM,
         Abgr16161616 | Xbgr16161616 => vk::Format::R16G16B16A16_UNORM,
         Abgr16161616f | Xbgr16161616f => vk::Format::R16G16B16A16_SFLOAT,
 
-        /* YUV */
+         
         Yuyv => vk::Format::G8B8G8R8_422_UNORM,
         Uyvy => vk::Format::B8G8R8G8_422_UNORM,
         Yuv420 => vk::Format::G8_B8_R8_3PLANE_420_UNORM,
@@ -550,7 +512,7 @@ pub fn drm_to_vulkan(drm_format: u32) -> Option<vk::Format> {
     })
 }
 
-/* Definitions from drm.h and linux/dma-buf.h */
+ 
 const DRM_IOCTL_SYNCOBJ_DESTROY: (u32, u8) = ('d' as u32, 0xC0);
 const DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE: (u32, u8) = ('d' as u32, 0xC2);
 const DRM_IOCTL_SYNCOBJ_EVENTFD: (u32, u8) = ('d' as u32, 0xCF);
@@ -583,8 +545,7 @@ struct DmabufExportSyncFile {
 }
 const DMA_BUF_SYNC_READ: u32 = 1 << 0;
 
-/** Requirements: for the specific ioctl used, arg must be properly
- * aligned, have the right type, and have the correct lifespan. */
+ 
 unsafe fn ioctl_loop<T>(
     drm_fd: &OwnedFd,
     typ: u32,
@@ -593,8 +554,8 @@ unsafe fn ioctl_loop<T>(
     about: &str,
 ) -> Result<(), String> {
     loop {
-        // Note: Platforms vary in the signedness of the argument type passed
-        // to libc, and some old big-endian platforms have a different ioctl code format
+         
+         
         let ret = libc::ioctl(
             drm_fd.as_raw_fd(),
             request_code_readwrite!(typ, code, std::mem::size_of::<T>()),
@@ -611,7 +572,7 @@ unsafe fn ioctl_loop<T>(
     }
 }
 
-/** Link a drm syncobj handle and time point to an eventfd */
+ 
 fn drm_syncobj_eventfd(
     drm_fd: &OwnedFd,
     event_fd: &OwnedFd,
@@ -620,14 +581,14 @@ fn drm_syncobj_eventfd(
 ) -> Result<(), String> {
     let mut x = DrmSyncobjEventFd {
         handle,
-        flags: 0, // or: DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE
+        flags: 0,  
         point,
         fd: event_fd.as_raw_fd(),
         pad: 0,
     };
     unsafe {
-        // SAFETY: x is repr(C), x has proper type for the ioctl,
-        // and the ioctl does not use the pointer after the call
+         
+         
         ioctl_loop::<DrmSyncobjEventFd>(
             drm_fd,
             DRM_IOCTL_SYNCOBJ_EVENTFD.0,
@@ -637,7 +598,7 @@ fn drm_syncobj_eventfd(
         )
     }
 }
-/** Convert a DRM syncobj fd to a handle */
+ 
 fn drm_syncobj_fd_to_handle(drm_fd: &OwnedFd, syncobj_fd: &OwnedFd) -> Result<u32, String> {
     let mut x = DrmSyncobjHandle {
         handle: 0,
@@ -646,8 +607,8 @@ fn drm_syncobj_fd_to_handle(drm_fd: &OwnedFd, syncobj_fd: &OwnedFd) -> Result<u3
         pad: 0,
     };
     unsafe {
-        // SAFETY: x is repr(C), x has proper type for the ioctl,
-        // and the ioctl does not use the pointer after the call
+         
+         
         ioctl_loop::<DrmSyncobjHandle>(
             drm_fd,
             DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE.0,
@@ -659,16 +620,12 @@ fn drm_syncobj_fd_to_handle(drm_fd: &OwnedFd, syncobj_fd: &OwnedFd) -> Result<u3
     }
 }
 
-/** Destroy a drm syncobj handle.
- *
- * To get full IO-safety for DRM handles, would need an OwnedDrmHandle
- * wrapper. As-is, the caller should only call this on syncobj handles
- * it exclusively controls. */
+ 
 fn drm_syncobj_destroy(drm_fd: &OwnedFd, handle: u32) -> Result<(), String> {
     let mut x = DrmSyncobjDestroy { handle, pad: 0 };
     unsafe {
-        // SAFETY: x is repr(C), x has proper type for the ioctl,
-        // and the ioctl does not use the pointer after the call
+         
+         
         ioctl_loop(
             drm_fd,
             DRM_IOCTL_SYNCOBJ_DESTROY.0,
@@ -679,19 +636,15 @@ fn drm_syncobj_destroy(drm_fd: &OwnedFd, handle: u32) -> Result<(), String> {
     }
 }
 
-/** Export the sync file holding read fences associated with the given dmabuf.
- *
- * Returns Some(fd) is successful, None if operation possibly not supported, Err
- * on error.
- */
+ 
 fn dmabuf_sync_file_export(dmabuf_fd: &OwnedFd) -> Result<Option<OwnedFd>, String> {
     let mut x = DmabufExportSyncFile {
         flags: DMA_BUF_SYNC_READ,
         fd: -1,
     };
     unsafe {
-        // SAFETY: x is repr(C), x has proper type for the ioctl,
-        // and the ioctl does not use the pointer after the call
+         
+         
 
         let code = request_code_readwrite!(
             DMABUF_IOCTL_EXPORT_SYNC_FILE.0,
@@ -709,7 +662,7 @@ fn dmabuf_sync_file_export(dmabuf_fd: &OwnedFd) -> Result<Option<OwnedFd>, Strin
             {
                 continue;
             } else if errno == errno::Errno::EINVAL as i32 {
-                // EINVAL: the request is not valid (= kernel might be old and may not support this)
+                 
                 return Ok(None);
             } else {
                 return Err(tag!(
@@ -722,15 +675,12 @@ fn dmabuf_sync_file_export(dmabuf_fd: &OwnedFd) -> Result<Option<OwnedFd>, Strin
     }
     assert!(x.fd != -1);
     unsafe {
-        // SAFETY: fd was just created, has been checked valid, and has no other references
+         
         Ok(Some(OwnedFd::from_raw_fd(x.fd)))
     }
 }
 
-/** Identify the maximum supported image extents for a given format-modifier pair.
- *
- * Returns None if the image format/modifier/usage/etc. combination is not supported.
- */
+ 
 fn get_max_external_image_size(
     instance: &Instance,
     physdev: vk::PhysicalDevice,
@@ -778,9 +728,7 @@ fn get_max_external_image_size(
     }
 }
 
-/** Rank physical devices by performance and video enc/decoding capabilities.
- *
- * Lower values are assumed better */
+ 
 fn device_rank(info: &DeviceInfo) -> u8 {
     let base_score = match info.typ {
         vk::PhysicalDeviceType::DISCRETE_GPU => 0,
@@ -792,50 +740,50 @@ fn device_rank(info: &DeviceInfo) -> u8 {
     };
     let hw_enc = info.hw_enc_h264;
     let hw_dec = info.hw_dec_h264 | info.hw_dec_av1;
-    /* prefers: faster gpu, then hw decoding availability, then hw encoding availability */
+     
     base_score * 4 + ((!hw_enc) as u8) + 2 * ((!hw_dec) as u8)
 }
 
-/** Basic information about a [vk::PhysicalDevice] */
+ 
 #[derive(Copy, Clone)]
 pub struct DeviceInfo {
     physdev: vk::PhysicalDevice,
-    /* Render node device ID. Waypipe always connects to the render node determined by this ID. */
+     
     render_device_id: u64,
-    /* Primary device ID, used for matching if the compositor indicates the primary node. */
+     
     primary_device_id: Option<u64>,
     typ: vk::PhysicalDeviceType,
-    /* If hardware video encoding/decoding is supported; set to false if !with_video */
+     
     pub hw_enc_h264: bool,
     pub hw_dec_h264: bool,
     pub hw_dec_av1: bool,
-    /** Iff true, device supports import and export of timeline semaphores from/to sync files */
+     
     supports_timeline_import_export: bool,
-    /** Iff true, device supports import of binary semaphores from sync files*/
+     
     supports_binary_import: bool,
 }
 
-/** List of instance extensions that Waypipe requires */
+ 
 const INSTANCE_EXTS: &[*const c_char] = &[
-    vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_NAME.as_ptr(), // needed to link device and DRM node
-    vk::KHR_EXTERNAL_MEMORY_CAPABILITIES_NAME.as_ptr(),    // needed for buffer import/export
-    vk::KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_NAME.as_ptr(), // needed to export/poll on timeline semaphores
+    vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_NAME.as_ptr(),  
+    vk::KHR_EXTERNAL_MEMORY_CAPABILITIES_NAME.as_ptr(),     
+    vk::KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_NAME.as_ptr(),  
 ];
 
-/** List of device extensions that Waypipe requires */
+ 
 const EXT_LIST: &[(&CStr, u32)] = &[
     (
-        /* Needed to get drm node details */
+         
         vk::EXT_PHYSICAL_DEVICE_DRM_NAME,
         1,
     ),
     (
-        /* This and dependencies needed to import/export dmabufs */
+         
         vk::EXT_IMAGE_DRM_FORMAT_MODIFIER_NAME,
         1,
     ),
     (
-        /* Used to bind dmabuf memory */
+         
         vk::KHR_BIND_MEMORY2_NAME,
         1,
     ),
@@ -847,68 +795,62 @@ const EXT_LIST: &[(&CStr, u32)] = &[
     (vk::KHR_EXTERNAL_MEMORY_FD_NAME, 1),
     (vk::KHR_DEDICATED_ALLOCATION_NAME, 3),
     (vk::KHR_MAINTENANCE1_NAME, 1),
-    /* For synchronization with the client/compositor, which need
-     * not be Vulkan programs themselves */
+     
     (vk::EXT_QUEUE_FAMILY_FOREIGN_NAME, 1),
-    /* For timeline semaphores and explicit sync */
+     
     (vk::KHR_TIMELINE_SEMAPHORE_NAME, 2),
-    /* To import/export semaphores to fds, for explicit sync protocols & event loop */
+     
     (vk::KHR_EXTERNAL_SEMAPHORE_FD_NAME, 1),
-    /* Needed by external_semaphore_fd */
+     
     (vk::KHR_EXTERNAL_SEMAPHORE_NAME, 1),
 ];
 
-/** List of device extensions required to support hardware video encoding. */
+ 
 const EXT_LIST_VIDEO_ENC_BASE: &[(&CStr, u32)] = &[(
     vk::KHR_VIDEO_ENCODE_QUEUE_NAME,
     vk::KHR_VIDEO_ENCODE_QUEUE_SPEC_VERSION,
 )];
-/** List of device extensions required for hardware video encoding with H.264 */
+ 
 const EXT_VIDEO_ENC_H264: (&CStr, u32) = (
     vk::KHR_VIDEO_ENCODE_H264_NAME,
     vk::KHR_VIDEO_ENCODE_H264_SPEC_VERSION,
 );
-/** List of device extensions required to support hardware video decoding. */
+ 
 const EXT_LIST_VIDEO_DEC_BASE: &[(&CStr, u32)] = &[(
     vk::KHR_VIDEO_DECODE_QUEUE_NAME,
     vk::KHR_VIDEO_DECODE_QUEUE_SPEC_VERSION,
 )];
-/** List of device extensions required for hardware video decoding with H.264 */
+ 
 const EXT_VIDEO_DEC_H264: (&CStr, u32) = (
     vk::KHR_VIDEO_DECODE_H264_NAME,
     vk::KHR_VIDEO_DECODE_H264_SPEC_VERSION,
 );
-/** List of device extensions required for hardware video decoding with AV1 */
+ 
 const EXT_VIDEO_DEC_AV1: (&CStr, u32) = (
     vk::KHR_VIDEO_DECODE_AV1_NAME,
     vk::KHR_VIDEO_DECODE_AV1_SPEC_VERSION,
 );
-/** List of device extensions required at minimum for hardware video
- * encoding or decoding.
- *
- * Require the latest known version for video related extensions,
- * to be safe, because AVVulkanDeviceContext is only given extension
- * names and not their versions.*/
+ 
 const EXT_LIST_VIDEO_BASE: &[(&CStr, u32)] = &[
     (vk::KHR_VIDEO_QUEUE_NAME, vk::KHR_VIDEO_QUEUE_SPEC_VERSION),
-    /* Also required, for ffmpeg's vkQueueSubmit2 */
+     
     (
         vk::KHR_SYNCHRONIZATION2_NAME,
         vk::KHR_SYNCHRONIZATION2_SPEC_VERSION,
     ),
-    /* YCbCR support */
+     
     (
         vk::KHR_SAMPLER_YCBCR_CONVERSION_NAME,
         vk::KHR_SAMPLER_YCBCR_CONVERSION_SPEC_VERSION,
     ),
-    /* For ffmpeg encoding */
+     
     (
         vk::KHR_VIDEO_MAINTENANCE1_NAME,
         vk::KHR_VIDEO_MAINTENANCE1_SPEC_VERSION,
     ),
 ];
 
-/** Create a Vulkan instance and record which devices are acceptable */
+ 
 pub fn setup_vulkan_instance(
     debug: bool,
     video: &VideoSetting,
@@ -928,7 +870,7 @@ pub fn setup_vulkan_instance(
             if video.dec_pref != Some(CodecPreference::SW)
                 || video.enc_pref != Some(CodecPreference::SW)
             {
-                // TODO: get best API version available, and turn off video enc/decoding if not?
+                 
                 vk::make_api_version(0, 1, 3, 0)
             } else {
                 vk::make_api_version(0, 1, 0, 0)
@@ -941,14 +883,14 @@ pub fn setup_vulkan_instance(
         .flags(vk::InstanceCreateFlags::default());
 
     let validation = c"VK_LAYER_KHRONOS_validation";
-    // let dump = c"VK_LAYER_LUNARG_api_dump";
+     
     let debug_layers = &[validation.as_ptr()];
 
     unsafe {
         let entry = Entry::load().map_err(|x| tag!("Failed to load Vulkan library: {:?}", x))?;
 
         if debug {
-            /* Only use validation layers with --debug flag if supported */
+             
             let has_validation = entry
                 .enumerate_instance_layer_properties()
                 .map_err(|x| tag!("Failed to get vulkan layer properties: {:?}", x))?
@@ -961,8 +903,7 @@ pub fn setup_vulkan_instance(
 
         let instance: Instance = match entry.create_instance(&create, None) {
             Err(x) => {
-                /* The set of available extensions and layers can (in theory) change at runtime,
-                 * so delay extension checks until now. */
+                 
                 if x == vk::Result::ERROR_EXTENSION_NOT_PRESENT {
                     debug!("Vulkan instance does not support all required instance extensions");
                     return Ok(None);
@@ -972,8 +913,7 @@ pub fn setup_vulkan_instance(
             Ok(i) => i,
         };
 
-        /* Note: initial enumeration can be expensive since some details may be loaded
-         * even for devices that are not needed */
+         
         let devices = instance
             .enumerate_physical_devices()
             .map_err(|x| tag!("Failed to get physical devices: {:?}", x))?;
@@ -1087,7 +1027,7 @@ pub fn setup_vulkan_instance(
                     .iter()
                     .all(|(name, version)| exts_has_prop(&exts, name, *version))
             {
-                // TODO: first verify that libavcodec has the appropriate encoders/decoders available, if possible
+                 
                 if video.dec_pref != Some(CodecPreference::SW)
                     && EXT_LIST_VIDEO_DEC_BASE
                         .iter()
@@ -1114,7 +1054,7 @@ pub fn setup_vulkan_instance(
             let mut timeline_semaphore_info = vk::SemaphoreTypeCreateInfoKHR::default()
                 .semaphore_type(vk::SemaphoreType::TIMELINE)
                 .initial_value(0);
-            /* TODO: should not SYNC_FD be supported and preferable? */
+             
             let ext_semaphore_req = vk::PhysicalDeviceExternalSemaphoreInfo::default()
                 .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD)
                 .push_next(&mut timeline_semaphore_info);
@@ -1146,17 +1086,7 @@ pub fn setup_vulkan_instance(
                 .external_semaphore_features
                 .contains(vk::ExternalSemaphoreFeatureFlags::IMPORTABLE_KHR);
             if cfg!(target_os = "freebsd") {
-                /* FreeBSD does not (as of writing) support the EXPORT_SYNC_FILE ioctl, and
-                 * thus cannot, even if binary semaphores can be imported, extract a sync file
-                 * from a dmabuf; with implicitly synchronized applications it will need to
-                 * fall back to polling the dmabuf. This may change in the future.
-                 *
-                 * It also does not currently support DRM_IOCTL_SYNCOBJ_EVENTFD, needed to
-                 * use exported timeline semaphores by linking them to eventfds.
-                 *
-                 * TODO: introduce a runtime check; and/or move to finer-grained feature
-                 * detection. Old Linux and other kernels also do not support these ioctls.
-                 */
+                 
                 debug!("No EXPORT_SYNC_FILE, disabling binary semaphore import/export");
                 supports_binary_import = false;
                 supports_timeline_import_export = false;
@@ -1186,7 +1116,7 @@ pub fn setup_vulkan_instance(
                 None
             };
 
-            /* Some device_id is needed for the Wayland application to use */
+             
             let Some(device_id) = render_id else {
                 debug!("Skipping device, has no DRM render node");
                 continue;
@@ -1214,20 +1144,18 @@ pub fn setup_vulkan_instance(
 }
 
 impl VulkanInstance {
-    /** Return true if Vulkan has a physical device available that Waypipe can use */
+     
     pub fn has_device(&self, main_device: Option<u64>) -> bool {
         self.pick_device(main_device).is_some()
     }
 
-    /** Return true if the device exists and will support timeline semaphore import and export */
+     
     pub fn device_supports_timeline_import_export(&self, main_device: Option<u64>) -> bool {
         self.pick_device(main_device)
             .is_some_and(|d| d.supports_timeline_import_export)
     }
 
-    /** If `main_device` is None, provide device info for the "best" available
-     * device; otherwise, for the device with the specified ID, if available.
-     */
+     
     fn pick_device(&self, main_device: Option<u64>) -> Option<&DeviceInfo> {
         if let Some(d) = main_device {
             for x in &self.physdevs {
@@ -1252,11 +1180,10 @@ impl VulkanInstance {
     }
 }
 
-/** Return a vector listing all extensions that should be enabled for
- * the device. (Pointers are constants / from &'static CStr.) */
+ 
 fn get_enabled_exts(dev_info: &DeviceInfo) -> Vec<*const c_char> {
     let mut enabled_exts: Vec<*const c_char> = Vec::new();
-    // TODO: use a static (stack) array instead, since max number of extensions is small
+     
     enabled_exts.extend(EXT_LIST.iter().map(|(name, _)| name.as_ptr()));
     if dev_info.hw_enc_h264 || dev_info.hw_dec_h264 || dev_info.hw_dec_av1 {
         enabled_exts.extend(EXT_LIST_VIDEO_BASE.iter().map(|(name, _)| name.as_ptr()));
@@ -1288,7 +1215,7 @@ fn get_enabled_exts(dev_info: &DeviceInfo) -> Vec<*const c_char> {
     enabled_exts
 }
 
-/** Set up a physical device */
+ 
 pub fn setup_vulkan_device_base(
     instance: &Arc<VulkanInstance>,
     main_device: Option<u64>,
@@ -1359,7 +1286,7 @@ pub fn setup_vulkan_device_base(
 
         let queue_family = qfis[0];
 
-        let prio = &[1.0]; // make a single queue
+        let prio = &[1.0];  
         let cg_queue = qfis[0] == qfis[1];
         let nqf = if using_hw_video {
             if qfis.contains(&u32::MAX) {
@@ -1419,7 +1346,7 @@ pub fn setup_vulkan_device_base(
         {
             Ok(x) => x,
             Err(x) => {
-                // TODO: cleanup more
+                 
                 return Err(tag!("Failed to create logical device: {}", x));
             }
         };
@@ -1437,7 +1364,7 @@ pub fn setup_vulkan_device_base(
 
         let mut formats = BTreeMap::<vk::Format, FormatData>::new();
         for f in SUPPORTED_FORMAT_LIST {
-            // note: VkFormatProperties3KHR exists, providing more bits for flags
+             
             let mut format_drm_props = vk::DrmFormatModifierPropertiesListEXT::default();
             let mut format_props =
                 vk::FormatProperties2::default().push_next(&mut format_drm_props);
@@ -1448,7 +1375,7 @@ pub fn setup_vulkan_device_base(
             );
 
             if format_drm_props.drm_format_modifier_count == 0 {
-                /* No associated modifiers / format not supported for import/export */
+                 
                 continue;
             }
             let mut dst = Vec::new();
@@ -1470,7 +1397,7 @@ pub fn setup_vulkan_device_base(
             let mut mod_data_list: Vec<ModifierData> = Vec::new();
 
             for m in dst.iter() {
-                /* YUV formats are only fully supported if one can create and import disjoint planes */
+                 
                 if info.planes > 1
                     && !m
                         .drm_format_modifier_tiling_features
@@ -1496,7 +1423,7 @@ pub fn setup_vulkan_device_base(
                     base_usage,
                 )?
                 else {
-                    /* Specific combination of format/modifier/usage/queue not supported. */
+                     
                     continue;
                 };
 
@@ -1534,13 +1461,13 @@ pub fn setup_vulkan_device_base(
             }
 
             if format_filter_for_video {
-                // todo: only restrict modifiers when the format is usable for video?
-                // (in general, if a format supports video encoding, clients should preferably use it.)
-                // Alternatively, a preference for video-encodable formats could be made part of dmabuf-feedback,
-                // and/or an intermediate storage image could be added to allow video encoding for modifiers
-                // which do no support storage or only support small sizes
+                 
+                 
+                 
+                 
+                 
                 for i in (0..mod_list.len()).rev() {
-                    /* Iterating in reverse order ensures each entry is considered exactly once */
+                     
                     if mod_data_list[i].max_size_store_and_sample.is_none() {
                         mod_list.remove(i);
                         mod_data_list.remove(i);
@@ -1562,8 +1489,7 @@ pub fn setup_vulkan_device_base(
         }
 
         if log::log_enabled!(log::Level::Debug) {
-            /* Print the entire set of formats/modifiers that Waypipe supports, along with the
-             * properties of them that Waypipe uses, compactly. */
+             
             let mut entries: Vec<(ModifierData, vk::Format, u64)> = Vec::new();
             for f in formats.iter() {
                 for (m, data) in f.1.modifiers.iter().zip(f.1.modifier_data.iter()) {
@@ -1650,7 +1576,7 @@ pub fn setup_vulkan_device_base(
     }
 }
 
-/** Set up a physical device, including video encoding/decoding setup */
+ 
 pub fn setup_vulkan_device(
     instance: &Arc<VulkanInstance>,
     main_device: Option<u64>,
@@ -1688,7 +1614,7 @@ pub fn setup_vulkan_device(
     Ok(Some(Arc::new(dev)))
 }
 
-/** Get the first available memory type in `bitmask` with the given property flags.*/
+ 
 fn vulkan_get_memory_type_index(
     info: &VulkanDevice,
     bitmask: u32,
@@ -1706,9 +1632,7 @@ fn vulkan_get_memory_type_index(
     None
 }
 
-/** Image memory barrier for use when transferring image to the current queue from the FOREIGN queue.
- *
- * The access range is COLOR for the single level/layer of the entire image. */
+ 
 pub fn qfot_acquire_image_memory_barrier(
     image: vk::Image,
     old_layout: vk::ImageLayout,
@@ -1727,15 +1651,13 @@ pub fn qfot_acquire_image_memory_barrier(
         .new_layout(new_layout)
         .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
         .dst_queue_family_index(queue_family_idx)
-        /* queue family transfer acquire = srcAccessMask ignored, zero value recommended */
+         
         .src_access_mask(vk::AccessFlags::empty())
         .dst_access_mask(dst_access_mask)
         .subresource_range(standard_access_range)
 }
 
-/** Image memory barrier for use when transferring image from the current queue to the FOREIGN queue.
- *
- * The access range is COLOR for the single level/layer of the entire image. */
+ 
 pub fn qfot_release_image_memory_barrier(
     image: vk::Image,
     old_layout: vk::ImageLayout,
@@ -1754,13 +1676,13 @@ pub fn qfot_release_image_memory_barrier(
         .new_layout(new_layout)
         .src_queue_family_index(queue_family_idx)
         .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-        /* queue family transfer release = dstAccessMask ignored, zero value recommended */
+         
         .src_access_mask(src_access_mask)
         .dst_access_mask(vk::AccessFlags::empty())
         .subresource_range(standard_access_range)
 }
 
-/** Image aspect flags for the `x`th memory plane. */
+ 
 fn memory_plane(x: usize) -> vk::ImageAspectFlags {
     match x {
         0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
@@ -1771,10 +1693,7 @@ fn memory_plane(x: usize) -> vk::ImageAspectFlags {
     }
 }
 
-/** Create a CPU-visible buffer.
- *
- * If `read_optimized` is true, the buffer _may_ be allocated in a fashion allowing
- * for more efficient reads than otherwise. */
+ 
 fn create_cpu_visible_buffer(
     vulk: &VulkanDevice,
     size: usize,
@@ -1800,7 +1719,7 @@ fn create_cpu_visible_buffer(
         let memreq = vulk.dev.get_buffer_memory_requirements(buffer);
         assert!(memreq.size >= size as u64);
 
-        /* note: not asking for HOST_COHERENT, so memory must be explicitly flushed or invalidated */
+         
         let Some(mut mem_index) = vulkan_get_memory_type_index(
             vulk,
             memreq.memory_type_bits,
@@ -1811,12 +1730,7 @@ fn create_cpu_visible_buffer(
             ));
         };
         if read_optimized {
-            /* HOST_CACHED sometimes allows for much faster processing from CPU side;
-             * without it, individual read movs can become very slow. This isn't needed
-             * when only writing because write combination is typically used, and
-             * the write pattern is sequential. However, Vulkan devices are not
-             * guaranteed to have this: they only need to have DEVICE_LOCAL and
-             * HOST_VISIBLE|HOST_COHERENT types. */
+             
             if let Some(cached_mem_index) = vulkan_get_memory_type_index(
                 vulk,
                 memreq.memory_type_bits,
@@ -1830,7 +1744,7 @@ fn create_cpu_visible_buffer(
             .allocation_size(memreq.size)
             .memory_type_index(mem_index);
 
-        /* note: allocate_memory output will at least as aligned as memreq.alignment */
+         
         let mem = vulk
             .dev
             .allocate_memory(&alloc_info, None)
@@ -1844,10 +1758,7 @@ fn create_cpu_visible_buffer(
     }
 }
 
-/** Get a CPU-visible buffer of at least the specified length.
- *
- * If `read_optimized` is true, the buffer _may_ be allocated in a fashion allowing
- * for more efficient reads than otherwise. */
+ 
 pub fn vulkan_get_buffer(
     vulk: &Arc<VulkanDevice>,
     nom_len: usize,
@@ -1860,7 +1771,7 @@ pub fn vulkan_get_buffer(
             .dev
             .map_memory(mem, 0, len, vk::MemoryMapFlags::empty())
             .map_err(|_| "Failed to map memory")?;
-        // TODO: proper error handling; need to clean everything up
+         
 
         Ok(VulkanBuffer {
             vulk: vulk.clone(),
@@ -1877,11 +1788,11 @@ pub fn vulkan_get_buffer(
     }
 }
 
-/** Create a new command pool. */
+ 
 pub fn vulkan_get_cmd_pool(vulk: &Arc<VulkanDevice>) -> Result<Arc<VulkanCommandPool>, String> {
     let pool_info = vk::CommandPoolCreateInfo::default()
         .queue_family_index(vulk.queue_family)
-        .flags(vk::CommandPoolCreateFlags::empty()); // todo: transient? reset?
+        .flags(vk::CommandPoolCreateFlags::empty());  
 
     let pool = unsafe {
         vulk.dev
@@ -1894,13 +1805,13 @@ pub fn vulkan_get_cmd_pool(vulk: &Arc<VulkanDevice>) -> Result<Arc<VulkanCommand
     }))
 }
 
-/** A & view of a [VulkanBuffer]'s mapped contents. */
+ 
 pub struct VulkanBufferReadView<'a> {
     buffer: &'a VulkanBuffer,
     pub data: &'a [u8],
 }
 
-/** A &mut view of a [VulkanBuffer]'s mapped contents. */
+ 
 pub struct VulkanBufferWriteView<'a> {
     buffer: &'a VulkanBuffer,
     pub data: &'a mut [u8],
@@ -1943,7 +1854,7 @@ impl VulkanBuffer {
         assert!(!inner.has_writer);
         inner.reader_count += 1;
         unsafe {
-            // SAFETY: todo
+             
             VulkanBufferReadView {
                 buffer: self,
                 data: &*dst,
@@ -1957,7 +1868,7 @@ impl VulkanBuffer {
         assert!(inner.reader_count == 0);
         inner.has_writer = true;
         unsafe {
-            // SAFETY: todo
+             
             VulkanBufferWriteView {
                 buffer: self,
                 data: &mut *dst,
@@ -1977,12 +1888,10 @@ impl Drop for VulkanBufferWriteView<'_> {
     }
 }
 
-/** Import a [VulkanDmabuf] with specified dimensions and format
- * from the given list of planes.
- */
+ 
 pub fn vulkan_import_dmabuf(
     vulk: &Arc<VulkanDevice>,
-    planes: Vec<AddDmabufPlane>, // takes ownership, consumes fd. TODO: proper cleanup if this fails early
+    planes: Vec<AddDmabufPlane>,  
     width: u32,
     height: u32,
     drm_format: u32,
@@ -1992,17 +1901,17 @@ pub fn vulkan_import_dmabuf(
         .ok_or_else(|| tag!("Did not find matching Vulkan format for {}", drm_format))?;
     let format_info = get_vulkan_info(vk_format);
 
-    // note: we should still handle planes together, if only because it will be
-    // needed for video work
-    let mut layout = Vec::new(); // todo: any 'size-limited-vec-from-array' type to use?
+     
+     
+    let mut layout = Vec::new();  
 
     let mut plane_perm: Vec<usize> = (0..planes.len()).collect();
     plane_perm.sort_by_key(|i| planes[*i].plane_idx);
 
     let modifier = planes[0].modifier;
-    /* post linux-dmabuf version 5, all planes must have same modifier */
+     
     assert!(planes.iter().all(|x| x.modifier == modifier));
-    /* Check that all planes are represented */
+     
     assert!(plane_perm
         .iter()
         .enumerate()
@@ -2021,14 +1930,14 @@ pub fn vulkan_import_dmabuf(
     };
     assert!(width <= max_size.0 && height <= max_size.1);
 
-    // todo: invert?
+     
     for j in plane_perm.iter() {
         layout.push(vk::SubresourceLayout {
             offset: planes[*j].offset as u64,
             row_pitch: planes[*j].stride as u64,
-            size: 0,        /* required to be zero per VK_EXT_image_drm_format_modifier */
-            array_pitch: 0, /* not relevant for 2d image */
-            depth_pitch: 0, /* not relevant for 2d image */
+            size: 0,         
+            array_pitch: 0,  
+            depth_pitch: 0,  
         });
     }
 
@@ -2055,13 +1964,7 @@ pub fn vulkan_import_dmabuf(
         vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST
     };
 
-    /* Import the DMABUF with UNDEFINED layout, but thereafter assume GENERAL layout
-     * (so that no layout transition is done). This is needed to avoid doing an
-     * UNDEFINED->GENERAL layout transition that drops CCS plane contents and
-     * corrupts the image. This may not be strictly per Vulkan spec but seems to
-     * be the best solution; Gamescope and wlroots have done the same thing.
-     * Future spec updates may resolve the issue.
-     */
+     
     let import_layout = vk::ImageLayout::UNDEFINED;
     let init_layout = vk::ImageLayout::GENERAL;
 
@@ -2083,7 +1986,7 @@ pub fn vulkan_import_dmabuf(
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
         .usage(usage_bits)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE) // only one queue family may use this
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)  
         .initial_layout(import_layout)
         .push_next(&mut ext_create_info)
         .push_next(&mut modifier_info);
@@ -2097,11 +2000,11 @@ pub fn vulkan_import_dmabuf(
         })?;
 
         if format_info.planes > 1 {
-            /* Unclear how to handle hypothetical multi-planar formats with metadata memory planes */
+             
             assert!(planes.len() == format_info.planes);
         }
 
-        // TODO: handle non-disjoint YUV
+         
         let nbindplanes = format_info.planes;
 
         let fds: Vec<OwnedFd> = planes.into_iter().map(|x| x.fd).take(nbindplanes).collect();
@@ -2131,7 +2034,7 @@ pub fn vulkan_import_dmabuf(
 
             let plane_aspect = memory_plane(plane);
 
-            /* Needed for allocation size */
+             
             let mut req_plane_info =
                 vk::ImagePlaneMemoryRequirementsInfo::default().plane_aspect(plane_aspect);
             let mut req_info = vk::ImageMemoryRequirementsInfo2::default().image(image);
@@ -2147,7 +2050,7 @@ pub fn vulkan_import_dmabuf(
             assert!(mem_candidates != 0);
             let mem_index = mem_candidates.trailing_zeros();
 
-            // TODO: importing transfers the file descriptor!
+             
             let mut import_info = vk::ImportMemoryFdInfoKHR::default()
                 .fd(fd.into_raw_fd())
                 .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
@@ -2174,7 +2077,7 @@ pub fn vulkan_import_dmabuf(
             let bind_img = vk::BindImageMemoryInfo::default()
                 .image(image)
                 .memory(mem)
-                .memory_offset(0); /* memory offset must be zero unless aliasing */
+                .memory_offset(0);  
 
             bind_infos.push(if nbindplanes > 1 {
                 bind_img.push_next(bind_plane)
@@ -2197,7 +2100,7 @@ pub fn vulkan_import_dmabuf(
             return Err(tag!("Failed to bind memory: {}", x));
         }
 
-        // Keep VkDeviceMemory around, to free properly later
+         
         let mut mem_planes: Vec<(vk::DeviceMemory, u32, u32)> = Vec::new();
         for i in 0..bind_infos.len() {
             mem_planes.push((
@@ -2223,10 +2126,7 @@ pub fn vulkan_import_dmabuf(
     }
 }
 
-/** Create a [VulkanDmabuf] and the the planes exported from it.
- *
- * (Note: plane parameters may not exactly match image dimensions.)
- */
+ 
 pub fn vulkan_create_dmabuf(
     vulk: &Arc<VulkanDevice>,
     width: u32,
@@ -2241,7 +2141,7 @@ pub fn vulkan_create_dmabuf(
 
     let format_data = &vulk.formats[&vk_format];
 
-    /*<- the list of modifiers that may be chosen */
+     
     let mut mod_options = Vec::new();
     for (v, data) in format_data
         .modifiers
@@ -2313,7 +2213,7 @@ pub fn vulkan_create_dmabuf(
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
             .usage(usage_bits)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE) // only one queue family may use this
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)  
             .initial_layout(init_layout)
             .push_next(&mut ext_create_info)
             .push_next(&mut modifier_info);
@@ -2345,14 +2245,12 @@ pub fn vulkan_create_dmabuf(
             mod_info.max_size_transfer
         };
         if width > import_size_limit.0 || height > import_size_limit.1 {
-            /* In theory, Vulkan could export images at a given size with a modifier
-             * that Vulkan cannot import at that size. Only weird implementations would
-             * do this in practice, so warn if this happens. */
+             
             debug!("Warning: created dmabuf with format={:08x}, modifier={:016x} has size {}x{} larger than the {}x{} allowed for import",
                 drm_format, props.drm_format_modifier, width, height, import_size_limit.0, import_size_limit.1);
         }
 
-        let mut bind_infos: Vec<vk::BindImageMemoryInfoKHR<'_>> = Vec::new(); // todo: fixed size array
+        let mut bind_infos: Vec<vk::BindImageMemoryInfoKHR<'_>> = Vec::new();  
         let mut planes = Vec::<AddDmabufPlane>::new();
         let mut mem_fds = Vec::new();
         for plane in 0..nplanes {
@@ -2366,12 +2264,12 @@ pub fn vulkan_create_dmabuf(
 
             let mut req_out = vk::MemoryRequirements2::default();
 
-            // TODO: load via KHR instead?
+             
             vulk.get_mem_reqs2
                 .get_image_memory_requirements2(&req_info, &mut req_out);
 
             assert!(req_out.memory_requirements.memory_type_bits != 0);
-            // Pick first/fastest type which is acceptable
+             
             let mem_index = req_out
                 .memory_requirements
                 .memory_type_bits
@@ -2411,13 +2309,13 @@ pub fn vulkan_create_dmabuf(
                 .ext_mem_fd
                 .get_memory_fd(&memory_fd_get_info)
                 .map_err(|_| "Failed to get memory fd")?;
-            // SAFETY: fd only captured here and vkGetMemoryFdKHR transfers ownership
+             
             mem_fds.push(OwnedFd::from_raw_fd(fd));
         }
 
         if mem_fds.len() != nmemoryplanes {
             assert!(mem_fds.len() == 1);
-            /* duplicate fd for each memory plane */
+             
             let fd = mem_fds.pop().unwrap();
             mem_fds.resize_with(nmemoryplanes - 1, || fd.try_clone().unwrap());
             mem_fds.push(fd);
@@ -2492,23 +2390,23 @@ pub fn vulkan_create_dmabuf(
     }
 }
 
-/** Create a (nonblocking) eventfd. */
+ 
 fn make_evt_fd() -> Result<OwnedFd, String> {
     unsafe {
         let event_init: c_uint = 0;
-        // EFD_SEMAPHORE ??
+         
         let ev_flags: c_int = nix::libc::EFD_CLOEXEC | nix::libc::EFD_NONBLOCK;
         let ev_fd: i32 = nix::libc::eventfd(event_init, ev_flags);
         if ev_fd == -1 {
             return Err(tag!("Failed to create eventfd: {}", errno::Errno::last()));
         }
-        // SAFETY: ev_fd only captured here and was checked valid
+         
         let event_fd = OwnedFd::from_raw_fd(ev_fd);
         Ok(event_fd)
     }
 }
 
-/** Import a Vulkan timeline semaphore from the given file descriptor. */
+ 
 pub fn vulkan_import_timeline(
     vulk: &Arc<VulkanDevice>,
     fd: OwnedFd,
@@ -2526,7 +2424,7 @@ pub fn vulkan_import_timeline(
     unsafe {
         let semaphore_drm_handle = drm_syncobj_fd_to_handle(&vulk.drm_fd, &fd)?;
 
-        /* This semaphore's contents will be _replaced_ by the import */
+         
         let semaphore = match vulk.dev.create_semaphore(&create_semaphore_info, None) {
             Ok(x) => x,
             Err(_) => {
@@ -2535,7 +2433,7 @@ pub fn vulkan_import_timeline(
             }
         };
 
-        let raw_fd = fd.into_raw_fd(); // TODO: if import or any following step fails, need to free.
+        let raw_fd = fd.into_raw_fd();  
         let import = vk::ImportSemaphoreFdInfoKHR::default()
             .fd(raw_fd)
             .flags(vk::SemaphoreImportFlags::empty())
@@ -2545,7 +2443,7 @@ pub fn vulkan_import_timeline(
         match vulk.ext_semaphore_fd.import_semaphore_fd(&import) {
             Ok(()) => (),
             Err(_) => {
-                /* Import failed, must clean up fd */
+                 
                 nix::unistd::close(raw_fd).unwrap();
                 vulk.dev.destroy_semaphore(semaphore, None);
                 drm_syncobj_destroy(&vulk.drm_fd, semaphore_drm_handle).unwrap();
@@ -2573,7 +2471,7 @@ pub fn vulkan_import_timeline(
     }
 }
 
-/** Helper function to create a timeline semaphore for internal use only */
+ 
 unsafe fn vulkan_create_simple_timeline(
     dev: &Device,
     start_pt: u64,
@@ -2592,8 +2490,7 @@ unsafe fn vulkan_create_simple_timeline(
     Ok(semaphore)
 }
 
-/** Helper function to create a timeline semaphore and matching drm syncobj,
- * event_fd, and fd for export. */
+ 
 unsafe fn vulkan_create_timeline_parts(
     dev: &Device,
     ext_semaphore_fd: &khr::external_semaphore_fd::Device,
@@ -2620,7 +2517,7 @@ unsafe fn vulkan_create_timeline_parts(
 
     let semaphore_fd = match ext_semaphore_fd.get_semaphore_fd(&sem_fd_info) {
         Ok(x) => {
-            // SAFETY: fd only captured here, vkGetSemaphoreFdKHR transfers ownership
+             
             OwnedFd::from_raw_fd(x)
         }
         Err(x) => {
@@ -2632,7 +2529,7 @@ unsafe fn vulkan_create_timeline_parts(
     let semaphore_drm_handle = match drm_syncobj_fd_to_handle(drm_fd, &semaphore_fd) {
         Ok(handle) => handle,
         Err(x) => {
-            /* semaphore_fd automatically destroyed */
+             
             dev.destroy_semaphore(semaphore, None);
             return Err(x);
         }
@@ -2640,7 +2537,7 @@ unsafe fn vulkan_create_timeline_parts(
     let event_fd = match make_evt_fd() {
         Ok(fd) => fd,
         Err(x) => {
-            /* semaphore_fd automatically destroyed */
+             
             drm_syncobj_destroy(drm_fd, semaphore_drm_handle).unwrap();
             dev.destroy_semaphore(semaphore, None);
             return Err(x);
@@ -2650,8 +2547,7 @@ unsafe fn vulkan_create_timeline_parts(
     Ok((semaphore, semaphore_drm_handle, semaphore_fd, event_fd))
 }
 
-/** Create a new Vulkan timeline semaphore and matching exported file
- * descriptor to share with another process */
+ 
 pub fn vulkan_create_timeline(
     vulk: &Arc<VulkanDevice>,
     start_pt: u64,
@@ -2678,10 +2574,7 @@ pub fn vulkan_create_timeline(
     }
 }
 
-/** Start a copy operation from the given dmabuf to a buffer.
- *
- * Related: [start_copy_segments_onto_dmabuf]
- */
+ 
 pub fn start_copy_segments_from_dmabuf(
     img: &Arc<VulkanDmabuf>,
     copy: &Arc<VulkanBuffer>,
@@ -2691,17 +2584,17 @@ pub fn start_copy_segments_from_dmabuf(
     wait_semaphores: &[(Arc<VulkanTimelineSemaphore>, u64)],
     wait_binary_semaphores: &[VulkanBinarySemaphore],
 ) -> Result<VulkanCopyHandle, String> {
-    // TODO: validate that buffer/dmabuf regions affected are not being used by any other transfer
-    // (otherwise callers risk unsoundness)
+     
+     
     let vulk: &VulkanDevice = &img.vulk;
     let format_info = get_vulkan_info(img.vk_format);
-    // todo: fully synchronous code; even if not high performance enough in practice,
-    // will be useful for testing or initial creation
+     
+     
 
-    // TODO: try to have everything necessary allocated in advance / so failures cannot happen
+     
 
     unsafe {
-        /* 1: run and wait for copy command */
+         
         let cmd_pool = pool.pool.lock().unwrap();
         let alloc_cb_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(*cmd_pool)
@@ -2715,9 +2608,9 @@ pub fn start_copy_segments_from_dmabuf(
         drop(cmd_pool);
         let cb = cbvec[0];
 
-        // copy-out target buffer -- store per image? 2x memory is OK; but ultimately this is temporary
+         
 
-        // possible: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+         
         let begin_cb_info =
             vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::empty());
         vulk.dev
@@ -2726,7 +2619,7 @@ pub fn start_copy_segments_from_dmabuf(
 
         let regions = make_copy_regions(segments, format_info, view_row_length, img);
 
-        // TODO: eventually, might copy plane0/plane1/plane2 for multiplanar formats
+         
         let op_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
 
         let mut img_inner = img.inner.lock().unwrap();
@@ -2754,7 +2647,7 @@ pub fn start_copy_segments_from_dmabuf(
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)];
 
-        // Perform layout transition, even though it is unclear how useful it is for DMABUFs
+         
         vulk.dev.cmd_pipeline_barrier(
             cb,
             vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -2800,7 +2693,7 @@ pub fn start_copy_segments_from_dmabuf(
         let mut waitv_semaphores: Vec<vk::Semaphore> =
             wait_semaphores.iter().map(|x| x.0.semaphore).collect();
         for bs in wait_binary_semaphores {
-            /* Wait values for non-timeline semaphores are ignored */
+             
             waitv_values.push(u64::MAX);
             waitv_semaphores.push(bs.semaphore);
         }
@@ -2825,7 +2718,7 @@ pub fn start_copy_segments_from_dmabuf(
             .push_next(&mut signal)];
         vulk.dev
             .queue_submit(queue.inner.queue, submits, vk::Fence::null())
-            .map_err(|_| "Queue submit failed")?; // <- can fail with OOM
+            .map_err(|_| "Queue submit failed")?;  
         drop(queue);
 
         Ok(VulkanCopyHandle {
@@ -2839,12 +2732,7 @@ pub fn start_copy_segments_from_dmabuf(
     }
 }
 
-/** Given a collection of damaged segments for a linear view of the image, return a
- * list of image copy operations.
- *
- * This can return an empty vector when all the segments are in the padding region of
- * the linear view and do not correspond to actual pixels.
- */
+ 
 fn make_copy_regions(
     segments: &[(u32, u32, u32)],
     format_info: FormatLayoutInfo,
@@ -2857,7 +2745,7 @@ fn make_copy_regions(
 
     let prototype = vk::BufferImageCopy::default()
         .buffer_row_length(row_length / format_info.bpp)
-        .buffer_image_height(0) /* not needed, single layer */
+        .buffer_image_height(0)  
         .image_subresource(
             vk::ImageSubresourceLayers::default()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -2868,12 +2756,12 @@ fn make_copy_regions(
     let z = vk::Offset3D::default();
     let e = vk::Extent3D::default().depth(1);
 
-    // TODO: use an arrayvec equivalent
+     
     let mut regions = Vec::<vk::BufferImageCopy>::new();
     for (mut source_offset, start, end) in segments {
-        // TODO: this assumes disjoint segments; validate time?
+         
 
-        // (Can avoid this by super-aligning diffs?)
+         
         let ubpp = format_info.bpp;
 
         let mut start_row = start / row_length;
@@ -2898,7 +2786,7 @@ fn make_copy_regions(
         let mut end_pos = 1 + ((end - 1) % row_length) / ubpp;
         let w = img.width;
         if start_pos >= w {
-            /* Advance to next row */
+             
             source_offset += row_length - start_pos * ubpp;
             start_pos = 0;
             start_row += 1;
@@ -2907,15 +2795,11 @@ fn make_copy_regions(
             end_pos = w;
         }
         if start_row > end_row || (start_row == end_row && start_pos >= end_pos) {
-            /* Can happen if start_pos/end_pos are both in padding region of row */
+             
             continue;
         }
 
-        /* Cases:
-         *  x--x |  x-- | x--
-         *       | --x  |----
-         *       |      |-x
-         */
+         
         if start_row == end_row {
             regions.push(
                 prototype
@@ -2974,16 +2858,7 @@ fn make_copy_regions(
     regions
 }
 
-/** Start a copy operation from the given buffer to a dmabuf.
- *
- * `segments` is a list of (src_start, dst_start, dst_end) tuples
- *
- * This may be moderately slow; 100 segments once took 0.5msec to
- * create and queue, while 1 took 0.1msec
- *
- * `wait_semaphores`: timeline semaphores and associated points to
- * to wait for until buffer is safe to modify
- */
+ 
 pub fn start_copy_segments_onto_dmabuf(
     img: &Arc<VulkanDmabuf>,
     copy: &Arc<VulkanBuffer>,
@@ -2995,7 +2870,7 @@ pub fn start_copy_segments_onto_dmabuf(
     let vulk: &VulkanDevice = &img.vulk;
     let format_info = get_vulkan_info(img.vk_format);
 
-    // Design: each image gets its own command pool, with four options (diff, fill, etc.)
+     
 
     unsafe {
         let cmd_pool = pool.pool.lock().unwrap();
@@ -3011,9 +2886,9 @@ pub fn start_copy_segments_onto_dmabuf(
         drop(cmd_pool);
         let cb = cbvec[0];
 
-        // copy-out target buffer -- store per image? 2x memory is OK; but ultimately this is temporary
+         
 
-        // possible: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+         
         let begin_cb_info =
             vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::empty());
         vulk.dev
@@ -3050,7 +2925,7 @@ pub fn start_copy_segments_onto_dmabuf(
             vk::AccessFlags::TRANSFER_WRITE,
         )];
 
-        // Perform layout transition, even though it is unclear how useful it is for DMABUFs
+         
         vulk.dev.cmd_pipeline_barrier(
             cb,
             vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -3114,10 +2989,10 @@ pub fn start_copy_segments_onto_dmabuf(
             .push_next(&mut signal)];
         vulk.dev
             .queue_submit(queue.inner.queue, submits, vk::Fence::null())
-            .map_err(|_| "Queue submit failed")?; // <- can fail with OOM
+            .map_err(|_| "Queue submit failed")?;  
         drop(queue);
 
-        // TODO: clean up or recycle command buffer
+         
         Ok(VulkanCopyHandle {
             vulk: img.vulk.clone(),
             _image: img.clone(),
@@ -3130,35 +3005,27 @@ pub fn start_copy_segments_onto_dmabuf(
 }
 
 impl VulkanCopyHandle {
-    /** Blocks the thread until the copy operation has completed.
-     *
-     * (Should not be used except for test code, because it blocks.) */
+     
     #[cfg(any(test, feature = "test_proto"))]
     pub fn wait_until_done(self: &VulkanCopyHandle) -> Result<(), String> {
         self.vulk
             .wait_for_timeline_pt(self.completion_time_point, u64::MAX)
             .map(|_| ())
     }
-    /** Get the point on the main timeline which will signaled once the copy
-     * operation has completed.*/
+     
     pub fn get_timeline_point(self: &VulkanCopyHandle) -> u64 {
         self.completion_time_point
     }
 }
 
-/** Get the device id for the special file at `path`, cast to a u64. */
+ 
 pub fn get_dev_for_drm_node_path(path: &Path) -> Result<u64, String> {
     get_rdev_for_file(path)
         .ok_or_else(|| tag!("Failed to get st_rdev for drm node at {}", path.display()))
 }
 
 impl VulkanDevice {
-    /** Wait until the main timeline semaphore has reached the given point,
-     * or `max_wait` nanoseconds have elapsed. (Note: u64::MAX corresponds to
-     * ~585 years and provides an effectively indefinite delay, assuming the
-     * clock does not jump very far forward.)
-     *
-     * Returns `true` if wait successful. */
+     
     pub fn wait_for_timeline_pt(&self, pt: u64, max_wait: u64) -> Result<bool, String> {
         unsafe {
             let sem = &[self.semaphore];
@@ -3178,12 +3045,11 @@ impl VulkanDevice {
         }
     }
 
-    /** Return the device ID */
+     
     pub fn get_device(&self) -> u64 {
         self.device_id
     }
-    /** Get the event_fd associated with the main timeline semaphore, if semaphore import/export is supported
-     * and there is one. */
+     
     pub fn get_event_fd<'a>(
         &'a self,
         timeline_point: u64,
@@ -3196,7 +3062,7 @@ impl VulkanDevice {
         }
     }
 
-    /** Return the timeline point for the main timeline semaphore for this device */
+     
     pub fn get_current_timeline_pt(&self) -> Result<u64, String> {
         unsafe {
             self.timeline_semaphore
@@ -3205,16 +3071,16 @@ impl VulkanDevice {
         }
     }
 
-    /** Return whether a DMABUF with specified parameters can be imported. */
+     
     pub fn can_import_image(
         &self,
         drm_format: u32,
         width: u32,
         height: u32,
-        planes: &[AddDmabufPlane], // todo: move modifier extraction out of the function
+        planes: &[AddDmabufPlane],  
         can_store_and_sample: bool,
     ) -> Result<(), VulkanImageParameterMismatch> {
-        /* post linux-dmabuf version 5, all planes must have same modifier */
+         
         let modifier = planes[0].modifier;
         assert!(planes.iter().all(|x| x.modifier == modifier));
 
@@ -3240,7 +3106,7 @@ impl VulkanDevice {
         }
     }
 
-    /** Return whether the device supports the given format */
+     
     pub fn supports_format(&self, drm_format: u32, drm_modifier: u64) -> bool {
         let Some(vk_fmt) = drm_to_vulkan(drm_format) else {
             return false;
@@ -3251,7 +3117,7 @@ impl VulkanDevice {
         data.modifiers.contains(&drm_modifier)
     }
 
-    /** Returns empty vector if format is not supported; otherwise a list of permissible modifiers */
+     
     pub fn get_supported_modifiers(&self, drm_format: u32) -> &[u64] {
         let Some(vk_fmt) = drm_to_vulkan(drm_format) else {
             return &[];
@@ -3262,40 +3128,36 @@ impl VulkanDevice {
         &data.modifiers
     }
 
-    /** Returns true if the device can import binary semaphores from sync files */
+     
     pub fn supports_binary_semaphore_import(&self) -> bool {
         self.dev_info.supports_binary_import
     }
 
-    /** Returns true if the device can import/export timeline semaphores from sync files */
+     
     pub fn supports_timeline_import_export(&self) -> bool {
         self.dev_info.supports_timeline_import_export
     }
 }
 
 impl VulkanDmabuf {
-    /** The total length of the canonical representation of the format
-     *
-     * If 'view_row_length' is not None, it specifies the row stride to use.
-     */
+     
     pub fn nominal_size(self: &VulkanDmabuf, view_row_length: Option<u32>) -> usize {
         let format_info = get_vulkan_info(self.vk_format);
-        // TODO: handle multiplanar formats
+         
         if let Some(r) = view_row_length {
             (self.height as usize) * (r as usize)
         } else {
             (self.width as usize) * (self.height as usize) * (format_info.bpp as usize)
         }
     }
-    /** Get the number of bytes per pixel (assuming DMABUF has a single-plane format) */
+     
     pub fn get_bpp(&self) -> u32 {
-        // todo: will need modification for multi-planar support
+         
         let format_info = get_vulkan_info(self.vk_format);
         format_info.bpp
     }
 
-    /** Export the read sync file for the DMABUF, returning None
-     * if the operation is not supported (as may happen with old kernels). */
+     
     pub fn export_sync_file(&self) -> Result<Option<VulkanSyncFile>, String> {
         let Some(sync_fd) = dmabuf_sync_file_export(&self.main_fd)? else {
             debug!("Failed to export sync file from dmabuf, possible old kernel.");
@@ -3310,7 +3172,7 @@ impl VulkanDmabuf {
 }
 
 impl VulkanSyncFile {
-    /** Export the sync file to a (single-use) binary semaphore. */
+     
     pub fn export_binary_semaphore(&self) -> Result<VulkanBinarySemaphore, String> {
         let mut sem_exp_info = vk::ExportSemaphoreCreateInfo::default()
             .handle_types(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD);
@@ -3318,7 +3180,7 @@ impl VulkanSyncFile {
             .semaphore_type(vk::SemaphoreType::BINARY)
             .initial_value(0);
         let create_semaphore_info = vk::SemaphoreCreateInfo::default()
-            .flags(vk::SemaphoreCreateFlags::empty()) // VK_SEMAPHORE_IMPORT_TEMPORARY_BIT ?
+            .flags(vk::SemaphoreCreateFlags::empty())  
             .push_next(&mut sem_type)
             .push_next(&mut sem_exp_info);
 
@@ -3347,7 +3209,7 @@ impl VulkanSyncFile {
             match vulk.ext_semaphore_fd.import_semaphore_fd(&import) {
                 Ok(()) => (),
                 Err(x) => {
-                    /* Import failed, must clean up fd */
+                     
                     nix::unistd::close(raw_fd).unwrap();
                     vulk.dev.destroy_semaphore(semaphore, None);
                     return Err(tag!("Failed to import semaphore: {}", x));
@@ -3363,8 +3225,7 @@ impl VulkanSyncFile {
 }
 
 impl VulkanTimelineSemaphore {
-    /** Block for up to `timeout_ns` for the timeline semaphore to
-     * reach the given point (or for some error to occur). */
+     
     #[allow(dead_code)]
     #[cfg(any(test, feature = "test_proto"))]
     pub fn wait_for_timeline_pt(
@@ -3381,12 +3242,12 @@ impl VulkanTimelineSemaphore {
                 .flags(vk::SemaphoreWaitFlags::empty());
             self.vulk
                 .timeline_semaphore
-                .wait_semaphores(&wait_info, timeout_ns) // u64::MAX is ~585 years
+                .wait_semaphores(&wait_info, timeout_ns)  
                 .map_err(|x| tag!("Waiting for completion failed: {:?}", x))?;
         }
         Ok(())
     }
-    /** Get the current value of the semaphore. */
+     
     pub fn get_current_pt(self: &VulkanTimelineSemaphore) -> Result<u64, String> {
         unsafe {
             self.vulk
@@ -3396,12 +3257,11 @@ impl VulkanTimelineSemaphore {
         }
     }
 
-    /** Get the eventfd used with this timeline semaphore */
+     
     pub fn get_event_fd<'a>(self: &'a VulkanTimelineSemaphore) -> BorrowedFd<'a> {
         self.external.event_fd.as_fd()
     }
-    /** Configure the eventfd to be ready when the semaphore has reached the
-     * timeline point */
+     
     pub fn link_event_fd<'a>(
         self: &'a VulkanTimelineSemaphore,
         timeline_point: u64,
@@ -3414,7 +3274,7 @@ impl VulkanTimelineSemaphore {
         )?;
         Ok(self.external.event_fd.as_fd())
     }
-    /** Signal the timeline semaphore with the given timeline point. */
+     
     pub fn signal_timeline_pt(self: &VulkanTimelineSemaphore, pt: u64) -> Result<(), String> {
         unsafe {
             let signal_info = vk::SemaphoreSignalInfo::default()
@@ -3429,9 +3289,7 @@ impl VulkanTimelineSemaphore {
     }
 }
 
-/** Copy the entire contents of the buffer onto the dmabuf.
- *
- * The buffer length must match the packed linear dmabuf size. */
+ 
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test_proto"))]
 pub fn copy_onto_dmabuf(
@@ -3441,7 +3299,7 @@ pub fn copy_onto_dmabuf(
 ) -> Result<(), String> {
     unsafe {
         let nom_len = buf.nominal_size(None);
-        // Safety: requires valid region, and no other reader or writer at this time
+         
         assert!(data.len() == nom_len);
         let inner = copy.inner.lock().unwrap();
         let dst = std::ptr::slice_from_raw_parts_mut(inner.data as *mut u8, nom_len);
@@ -3472,9 +3330,7 @@ pub fn copy_onto_dmabuf(
     Ok(())
 }
 
-/** Copy the entire contents of the dmabuf onto the buffer.
- *
- * The buffer length must match the packed linear dmabuf size. */
+ 
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test_proto"))]
 pub fn copy_from_dmabuf(
@@ -3508,7 +3364,7 @@ pub fn copy_from_dmabuf(
             .map_err(|_| "Failed to invalidate mapped memory range")?;
 
         assert!(nom_len as u64 <= copy.memory_len);
-        // Safety: requires valid region, and no other writers at this time
+         
         let inner = copy.inner.lock().unwrap();
         let src = slice_from_raw_parts(inner.data as *mut u8, nom_len);
         output.copy_from_slice(&*src);
@@ -3517,7 +3373,7 @@ pub fn copy_from_dmabuf(
     Ok(output)
 }
 
-/** A list of DRM formats, used to test that operations on each supported format work. */
+ 
 #[cfg(test)]
 pub const DRM_FORMATS: &[u32] = &[
     fourcc('A', 'R', '2', '4'),
@@ -3645,10 +3501,7 @@ pub const DRM_FORMATS: &[u32] = &[
     WlShmFormat::P030 as u32,
 ];
 
-/* Creating a Vulkan instance or connecting ffmpeg to it should be thread safe (safe to
- * run in multiple test threads), but in practice there may be memory corruption visible
- * every few hundred runs. This should not be a problem in practice for Waypipe since
- * setup_vulkan() is only called once; but could make tests flaky. */
+ 
 #[cfg(test)]
 pub static VULKAN_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -3729,7 +3582,7 @@ fn test_dmabuf() {
                 duration.as_secs_f32() * 1e3,
             );
             if vkf != vk::Format::R16G16B16A16_SFLOAT {
-                // TODO: Nans need not roundtrip exactly, need a check for this
+                 
                 assert!(pattern == output);
             }
         }

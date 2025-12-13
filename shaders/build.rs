@@ -18,12 +18,11 @@ fn main() {
         }
     }
 
-    /* No rerun-if directives -- these will track changes to
-     * existing files, but not register any new shaders. */
+     
 
     let compiler = "glslc";
 
-    /* If parallelization is ever needed, use jobserver */
+     
     shaders.sort();
     let mut contents = String::new();
 

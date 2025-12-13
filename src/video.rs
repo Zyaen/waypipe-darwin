@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Video encoding for dmabufs */
+ 
+ 
 #![cfg(feature = "video")]
 use crate::dmabuf::*;
 use crate::tag;
@@ -28,10 +28,7 @@ struct VulkanComputePipeline {
     pipeline: vk::Pipeline,
 }
 
-/** The preferred hardware and software decoders and encoders for a format.
- * Entries may be null if the codec is not available, and the same AVCodec may
- * be used for both software and hardware video.
- */
+ 
 struct CodecSet {
     decoder: *const AVCodec,
     sw_decoder: *const AVCodec,
@@ -39,11 +36,10 @@ struct CodecSet {
     sw_encoder: *const AVCodec,
 }
 
-/** Structure holding all video-related state (ffmpeg bindings, devices, pipelines, etc.)
- * linked to a specific Vulkan logical device. */
+ 
 pub struct VulkanVideo {
     bindings: ffmpeg,
-    av_hwdevice: *mut AVBufferRef, // to AVHWDeviceContext
+    av_hwdevice: *mut AVBufferRef,  
 
     codecs_h264: CodecSet,
     codecs_vp9: CodecSet,
@@ -53,8 +49,8 @@ pub struct VulkanVideo {
     can_hw_dec_h264: bool,
     can_hw_dec_av1: bool,
 
-    // TODO: is it possible to detect in advance when hardware en/decoding works?
-    // and only create the necessary pipeline?
+     
+     
     nv12_img_to_rgb: VulkanComputePipeline,
     rgb_to_nv12_img: VulkanComputePipeline,
     yuv420_buf_to_rgb: VulkanComputePipeline,
@@ -84,18 +80,18 @@ enum VulkanDecodeOpData {
 }
 
 pub struct VulkanDecodeOpHandle {
-    /* Copy operation is between these two objects */
+     
     decode: Arc<VideoDecodeState>,
     pool: Arc<VulkanCommandPool>,
 
-    // TODO: not safe to free a 'pending' command buffer; give Vulkan itself a list of copy-handles?
+     
     cb: vk::CommandBuffer,
     desc_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
 
     data: VulkanDecodeOpData,
 
-    // on the main queue's timeline semaphore
+     
     pub completion_time_point: u64,
 }
 
@@ -104,7 +100,7 @@ impl Drop for VulkanDecodeOpHandle {
         let cmd_pool = self.pool.pool.lock().unwrap();
         let vulk: &VulkanDevice = &self.decode.target.vulk;
         unsafe {
-            /* Verify that the command buffer execution has completed; if not, panic, as it's a program error */
+             
             if let Ok(counter) = vulk
                 .timeline_semaphore
                 .get_semaphore_counter_value(vulk.semaphore)
@@ -123,7 +119,7 @@ impl Drop for VulkanDecodeOpHandle {
                     vulk.dev.destroy_buffer_view(x.buf_y_view, None);
                     vulk.dev.destroy_buffer_view(x.buf_u_view, None);
                     vulk.dev.destroy_buffer_view(x.buf_v_view, None);
-                    // VulkanBuffer has Drop impl
+                     
                 }
                 VulkanDecodeOpData::Hardware(_) => {}
             }
@@ -154,7 +150,7 @@ unsafe fn destroy_compute_pipeline(dev: &Device, p: &VulkanComputePipeline) {
 }
 
 pub unsafe fn destroy_video(dev: &Device, video: &VulkanVideo) {
-    /* Cleanup vulkan bits of video state */
+     
     destroy_compute_pipeline(dev, &video.nv12_img_to_rgb);
     destroy_compute_pipeline(dev, &video.rgb_to_nv12_img);
     destroy_compute_pipeline(dev, &video.yuv420_buf_to_rgb);
@@ -171,21 +167,7 @@ struct VideoDecodeInner {
 }
 unsafe impl Send for VideoDecodeInner {}
 
-/** Hardware video decoding produces, and encoding uses, a multi-planar image with a
- * format like G8_B8R8_2PLANE_420_UNORM; however, these typically only have
- * TRANSFER and various SAMPLED format features, but not BLIT, STORAGE, or
- * COLOR_ATTACHMENT. (Note: STORAGE sometimes works in practice despite not being
- * supported; doing this may be faster but is risky and could lead to exciting bugs.)
- * Also,
- * Also, aliasing individual planes appears to require ALIAS|DISJOINT which Vulkan
- * video does not appear to always support (or if so, figuring it out and
- * integrating it with ffmpeg's code is complicated.) Therefore: To make encoding and
- * decoding more reliable and symmetric, transfer image data to/from a staging image
- * before doing the YUV<->RGB conversion.
- *
- * This does not hold a reference to the vulkan instance and cleaning up this struct
- * is the owner's responsibility.
- */
+ 
 struct VideoHWStagingImages {
     plane_memories: [vk::DeviceMemory; 2],
     plane_images: [vk::Image; 2],
@@ -197,12 +179,12 @@ enum VideoDecodeStateData {
 }
 
 pub struct VideoDecodeState {
-    // for now, only updating a single dmabuf
+     
     target: Arc<VulkanDmabuf>,
     inner: Mutex<VideoDecodeInner>,
-    /* Image view for `target`, type COLOR, entire image */
+     
     output_image_view: vk::ImageView,
-    /* State specific to hardware vs software decoding pathways */
+     
     data: VideoDecodeStateData,
 }
 
@@ -218,9 +200,9 @@ enum VideoEncodeStateData {
 pub struct VideoEncodeState {
     target: Arc<VulkanDmabuf>,
     inner: Mutex<VideoEncodeInner>,
-    /* Image view for `target`, type COLOR, entire image */
+     
     output_image_view: vk::ImageView,
-    /* State specific to hardware vs software encoding pathways */
+     
     data: VideoEncodeStateData,
 }
 
@@ -275,7 +257,7 @@ impl Drop for VideoEncodeState {
 }
 
 impl VulkanDecodeOpHandle {
-    /* Not recommended in general -- blocks the thread. Returns true if point reached. */
+     
     #[cfg(test)]
     pub fn wait_until_done(self: &VulkanDecodeOpHandle) -> Result<(), String> {
         self.decode
@@ -289,7 +271,7 @@ impl VulkanDecodeOpHandle {
     }
 }
 
-/** Return the length (excluding trailing 0) of a 0-terminated string. */
+ 
 unsafe fn strlen(s: *const c_char) -> usize {
     for i in 0.. {
         if s.add(i).read() == 0 {
@@ -301,7 +283,7 @@ unsafe fn strlen(s: *const c_char) -> usize {
 
 fn av_strerror<'a>(bindings: &ffmpeg, err_buf: &'a mut [u8], ret: c_int) -> &'a str {
     unsafe {
-        // SAFETY: av_strerror null-terminates, sizeof(u8) = sizeof(char), todo
+         
         if bindings.av_strerror(ret, err_buf.as_mut_ptr() as *mut c_char, err_buf.len()) == 0 {
             std::str::from_utf8(&err_buf[..err_buf.iter().position(|x| *x == 0).unwrap()]).unwrap()
         } else {
@@ -444,7 +426,7 @@ unsafe fn avcodec_receive_frame(
 
 fn pack_glsl_mat3x4(mtx: &[[f32; 4]; 3]) -> [u8; 48] {
     let mut push_u8 = [0u8; 48];
-    // 3 columns, 4 rows, rows packed
+     
     for (j, col) in mtx.iter().enumerate().take(3) {
         for (i, px) in col.iter().enumerate().take(4) {
             let k = 4 * j + i;
@@ -454,13 +436,11 @@ fn pack_glsl_mat3x4(mtx: &[[f32; 4]; 3]) -> [u8; 48] {
     push_u8
 }
 
-/* For compatibility with original Waypipe; align to 16-pixel blocks. This will
- * suffice for most alignment requirements. This is not a big deal since we should
- * copy to an intermediate buffer anyway. */
+ 
 fn align_size(width: u32, height: u32, format: VideoFormat) -> (i32, i32) {
     let mut w = width.next_multiple_of(16) as i32;
     if format == VideoFormat::H264 {
-        /* libavcodec requires width >= 32 for software encoding H264 */
+         
         w = w.max(32);
     }
     let h = height.next_multiple_of(16) as i32;
@@ -473,8 +453,7 @@ fn set_context_extensions(
     device_exts: &[*const c_char],
     instance_exts: &[*const c_char],
 ) -> Result<(), String> {
-    /* Provide instance and device extensions being used; all associated data
-     * (including strings) must be allocated, as it will be freed with av_free later */
+     
     unsafe {
         let inst_exts: *mut *const c_char =
             bindings.av_malloc(std::mem::size_of_val(instance_exts)) as _;
@@ -568,7 +547,7 @@ fn create_compute_pipeline(
         let pipeline_shader_create = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::COMPUTE)
             .module(shader_module)
-            .name(entrypoint); // no specialization info
+            .name(entrypoint);  
         let pipeline_info = vk::ComputePipelineCreateInfo::default()
             .flags(vk::PipelineCreateFlags::empty())
             .stage(pipeline_shader_create)
@@ -599,7 +578,7 @@ pub unsafe fn setup_video(
     device_exts: &[*const c_char],
     instance_exts: &[*const c_char],
 ) -> Result<Option<VulkanVideo>, String> {
-    /* loading libavcodec transitively loads a matching libavutil */
+     
     let lib = match ffmpeg::new(format!("libavcodec.so.{}", LIBAVCODEC_VERSION_MAJOR)) {
         Ok(x) => x,
         Err(x) => {
@@ -613,14 +592,14 @@ pub unsafe fn setup_video(
     } else {
         AV_LOG_WARNING
     } as _);
-    // av_log_set_level(AV_LOG_TRACE as _);
+     
     lib.av_log_set_callback(Some(lib.av_log_default_callback));
 
     let hw_video = pdev_info.hw_enc_h264 | pdev_info.hw_dec_h264 | pdev_info.hw_dec_av1;
     let device_ref = if hw_video {
         debug!("Setting up video hardware device context");
 
-        // Option<Video-ptr?>
+         
         let device_ref: *mut AVBufferRef =
             lib.av_hwdevice_ctx_alloc(AVHWDeviceType_AV_HWDEVICE_TYPE_VULKAN);
         if device_ref.is_null() {
@@ -629,7 +608,7 @@ pub unsafe fn setup_video(
         let hw_context = (*device_ref).data.cast::<AVHWDeviceContext>();
         let vk_context = (*hw_context).hwctx.cast::<AVVulkanDeviceContext>();
         let ctx: &mut AVVulkanDeviceContext = vk_context.as_mut().unwrap();
-        // todo: sanity check this
+         
         ctx.get_proc_addr = Some(core::mem::transmute::<
             unsafe extern "system" fn(
                 ash::vk::Instance,
@@ -641,7 +620,7 @@ pub unsafe fn setup_video(
                 *const c_char,
             ) -> std::option::Option<unsafe extern "C" fn()>,
         >(entry.static_fn().get_instance_proc_addr));
-        // u64?
+         
         ctx.inst = instance.handle().as_raw() as *mut _;
         ctx.phys_dev = physdev.as_raw() as *mut _;
         ctx.act_dev = dev.handle().as_raw() as *mut _;
@@ -660,8 +639,7 @@ pub unsafe fn setup_video(
 
         set_context_extensions(&lib, ctx, device_exts, instance_exts)?;
 
-        /* Note: the queue_family_indices are deprecated and will be replaced
-         * by `.qf`/`.nb_qf` */
+         
         ctx.queue_family_tx_index = qfis[0].try_into().unwrap();
         ctx.queue_family_comp_index = qfis[0].try_into().unwrap();
         ctx.queue_family_index = qfis[1].try_into().unwrap();
@@ -675,21 +653,21 @@ pub unsafe fn setup_video(
 
         av_hwdevice_ctx_init(&lib, device_ref)?;
 
-        // For vulkan, hwconfig currently ignored
+         
         let hwframes_constraints =
             lib.av_hwdevice_get_hwframe_constraints(device_ref, std::ptr::null_mut());
 
-        // NOTE: these are all formats supported by Vulkan; must constrain with decoding details...
+         
         let _hw_fmtlist = (*hwframes_constraints).valid_hw_formats;
         let _sw_fmtlist = (*hwframes_constraints).valid_sw_formats;
-        /* TODO: hwframes_constraints only gives Vulkan limitations; decoder may have other limits (like <= 4096 wide), as seen by trace output */
+         
 
         device_ref
     } else {
         std::ptr::null_mut()
     };
 
-    // todo: loading earlier may simplify video availability detection; loading on demand may reduce latency
+     
     let h264dec = lib.avcodec_find_decoder_by_name("h264\0".as_bytes().as_ptr() as *const _);
     let codecs_h264 = CodecSet {
         decoder: h264dec,
@@ -708,13 +686,7 @@ pub unsafe fn setup_video(
         decoder: lib.avcodec_find_decoder_by_name("av1\0".as_bytes().as_ptr() as *const _),
         sw_decoder: lib.avcodec_find_decoder_by_name("libdav1d\0".as_bytes().as_ptr() as *const _),
         encoder: std::ptr::null(),
-        /* AV1 encoder comparison. As of writing:
-         * - librav1e: may require a minimum frame lookahead, unknown if this was ever fixed
-         * - libsvtav1: as of version 2.3.0, zero latency is attainable with pred-struct=1:rc=2.
-         *     but: the setup/memory allocation for encoding takes a large fraction of a second,
-         *     which is impractical for Waypipe's current one-stream-per-buffer approach
-         * - libaom-av1: works, has a zero lag mode
-         */
+         
         sw_encoder: lib
             .avcodec_find_encoder_by_name("libaom-av1\0".as_bytes().as_ptr() as *const _),
     };
@@ -873,7 +845,7 @@ pub unsafe fn setup_video(
     }))
 }
 
-/** Lock the first queue in the given family, if a hardware context was set up */
+ 
 pub unsafe fn video_lock_queue(video: &VulkanVideo, queue_family: u32) {
     if video.av_hwdevice.is_null() {
         return;
@@ -882,7 +854,7 @@ pub unsafe fn video_lock_queue(video: &VulkanVideo, queue_family: u32) {
     let vk_context = (*hw_context).hwctx.cast::<AVVulkanDeviceContext>();
     (*vk_context).lock_queue.unwrap()(hw_context, queue_family, 0);
 }
-/** Unlock the first queue in the given family, if a hardware context was set up */
+ 
 pub unsafe fn video_unlock_queue(video: &VulkanVideo, queue_family: u32) {
     if video.av_hwdevice.is_null() {
         return;
@@ -892,14 +864,14 @@ pub unsafe fn video_unlock_queue(video: &VulkanVideo, queue_family: u32) {
     (*vk_context).unlock_queue.unwrap()(hw_context, queue_family, 0);
 }
 
-/* Pick format: Vulkan, and setup hw frames context */
+ 
 #[cfg(feature = "video")]
 unsafe extern "C" fn pick_video_format_hw(ctx: *mut AVCodecContext, fmts: *const i32) -> i32 {
-    /* Return AV_PIX_FMT_VULKAN if present in list */
+     
     for i in 0.. {
         let f = fmts.add(i).read();
         if f == AVPixelFormat_AV_PIX_FMT_NONE {
-            /* Failure */
+             
             error!("Did not find AV_PIX_FMT_VULKAN in format list");
             return AVPixelFormat_AV_PIX_FMT_NONE;
         }
@@ -1036,7 +1008,7 @@ fn create_staging_images(
     }
 }
 
-/** Create a vkImageSubresourceLayers for an entire image (single layer, no mipmaps) */
+ 
 fn subresource_layer(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSubresourceLayers {
     vk::ImageSubresourceLayers {
         aspect_mask,
@@ -1046,9 +1018,7 @@ fn subresource_layer(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSubresourceL
     }
 }
 
-/** Image memory barrier for a same-queue layout transition.
- *
- * The access range is COLOR for the single level/layer of the entire image. */
+ 
 fn image_layout_transition(
     image: vk::Image,
     old_layout: vk::ImageLayout,
@@ -1130,14 +1100,14 @@ pub fn setup_video_decode_hw(
             }
 
             cr.hw_device_ctx = nref;
-            // todo: need to ensure video bindings are not moved; do Arc<Pin> ?
+             
             cr.opaque = &video.bindings as *const ffmpeg as *mut _;
             cr.get_format = Some(pick_video_format_hw);
 
             (cr.width, cr.height) = (awidth, aheight);
         }
 
-        /* ctx->get_format will be called to do setup work once a packet is received */
+         
         avcodec_open(&video.bindings, ctx, decoder, std::ptr::null_mut())?;
 
         let output_image_view = create_dmabuf_view(img)?;
@@ -1159,12 +1129,12 @@ pub fn setup_video_decode_hw(
     }
 }
 
-/* Pick format: NV12 */
+ 
 unsafe extern "C" fn pick_video_format_sw(_ctx: *mut AVCodecContext, fmts: *const i32) -> i32 {
     for i in 0.. {
         let f = fmts.add(i).read();
         if f == AVPixelFormat_AV_PIX_FMT_NONE {
-            /* Failure */
+             
             error!("Did not find AVPixelFormat_AV_PIX_FMT_YUV420P in list");
             return AVPixelFormat_AV_PIX_FMT_NONE;
         }
@@ -1194,14 +1164,14 @@ pub fn setup_video_decode_sw(
         {
             let cr = ctx.as_mut().unwrap();
 
-            // todo: need to ensure video bindings are not moved; do Arc<Pin> ?
+             
             cr.opaque = &video.bindings as *const ffmpeg as *mut _;
             cr.get_format = Some(pick_video_format_sw);
 
             (cr.width, cr.height) = align_size(img.width, img.height, fmt);
         }
 
-        /* ctx->get_format will be called to do setup work once a packet is received */
+         
         avcodec_open(&video.bindings, ctx, decoder, std::ptr::null_mut())?;
 
         let output_image_view = create_dmabuf_view(img)?;
@@ -1215,12 +1185,7 @@ pub fn setup_video_decode_sw(
     }
 }
 
-/** libavcodec does not currently appear to have a way to expose the range of sizes
- * for which hardware encoding/decoding is supported. (Which may be graphics driver
- * dependent.) Technically one could try avcodec_open() and look for an EINVAL, but
- * doing that could hide bugs in Waypipe.) Hardcode a relatively safe threshold
- * for now, until a better solution is found.
- */
+ 
 const MIN_H264_HW_SIZE: (u32, u32) = (128, 128);
 
 pub fn setup_video_decode(
@@ -1267,7 +1232,7 @@ pub fn supports_video_format(
         }
     };
 
-    // TODO: lookup max size available for format
+     
     match fmt {
         VideoFormat::H264 => {
             !vid.codecs_h264.sw_decoder.is_null() && !vid.codecs_h264.sw_encoder.is_null()
@@ -1281,16 +1246,12 @@ pub fn supports_video_format(
     }
 }
 
-/* YUV to RGB conversion matrices. For compatibility with original Waypipe,
- * broadcast-limited output ranges (16-235 & 16-240, not 0-255) are used, and
- * Rec. 601 (where Y = 0.299 R + 0.587 G + 0.114 B, instead of
- * Rec. 709's Y = 0.2126 R + 0.7152 G + 0.0722 B)
- */
+ 
 const RGB_TO_YUV: &[[f32; 4]; 3] = &[
-    /* Limited range */
-    [0.25678822, 0.5041294, 0.09790588, 0.0627451], // Y
-    [0.4392157, -0.3677883, -0.07142738, 0.5019608], // U (Cb)
-    [-0.1482229, -0.2909928, 0.4392157, 0.5019608], // V (Cr)
+     
+    [0.25678822, 0.5041294, 0.09790588, 0.0627451],  
+    [0.4392157, -0.3677883, -0.07142738, 0.5019608],  
+    [-0.1482229, -0.2909928, 0.4392157, 0.5019608],  
 ];
 const YUV_TO_RGB: &[[f32; 4]; 3] = &[
     [1.1643835, 1.5960268, 0., -0.8742022],
@@ -1328,7 +1289,7 @@ pub fn start_dmavid_decode_hw(
 
         let frame: *mut AVFrame = video.bindings.av_frame_alloc();
 
-        // ignoring EAGAIN, since Waypipe's video streaming does one packet, one frame
+         
         avcodec_receive_frame(&video.bindings, dec_inner.ctx, frame)?;
 
         let (frame_width, frame_height): (u32, u32) = (
@@ -1347,10 +1308,10 @@ pub fn start_dmavid_decode_hw(
             .unwrap();
         let vkframe = ((*frame).data[0]).cast::<AVVkFrame>().as_mut().unwrap();
 
-        /* Lock frame while recording command buffer */
+         
         avvulk.lock_frame.as_ref().unwrap()(hwfc_ref, vkframe);
 
-        /* Assert single image output */
+         
         assert!(vkframe.img[1..]
             .iter()
             .all(|x| vk::Image::from_raw(*x as _).is_null()));
@@ -1371,7 +1332,7 @@ pub fn start_dmavid_decode_hw(
                 .descriptor_count(2)
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
         ];
-        // at most 1 descriptor set
+         
         let pool_storage_info = vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(1)
@@ -1472,8 +1433,7 @@ pub fn start_dmavid_decode_hw(
             &[],
             pre_transfer_barriers,
         );
-        /* Transition the staging images from undefined, discarding their previous
-         * contents; the images will be entirely filled by the following copy operations. */
+         
         let pre_transfer_barriers2 = &[
             image_layout_transition(
                 state_data.plane_images[0],
@@ -1609,7 +1569,7 @@ pub fn start_dmavid_decode_hw(
         let ygroups = state.target.height.div_ceil(8);
         vulk.dev.cmd_dispatch(cb, xgroups, ygroups, 1);
 
-        // Only for main image; other barriers are
+         
         let exit_barriers = &[qfot_release_image_memory_barrier(
             state.target.image,
             target_layout,
@@ -1633,8 +1593,8 @@ pub fn start_dmavid_decode_hw(
             .end_command_buffer(cb)
             .map_err(|_| "Failed to end command buffer")?;
 
-        /* Wait for _everything_ to complete -- do not know if graphics/compute/decode is last */
-        // vkframe.access not used?
+         
+         
         let waitv_stage_flags = &[vk::PipelineStageFlags::ALL_COMMANDS];
         let cbs = &[cb];
 
@@ -1642,8 +1602,7 @@ pub fn start_dmavid_decode_hw(
         queue.inner.last_semaphore_value += 1;
         let completion_time_point = queue.inner.last_semaphore_value;
         vkframe.sem_value[0] += 1;
-        /* Signal vkframe's semaphore to indicate when this operation is done,
-         * and main semaphore to notify main loop. */
+         
         let signal_values = &[completion_time_point, vkframe.sem_value[0]];
         let signal_semaphores = &[vulk.semaphore, wait_sems[0]];
 
@@ -1658,12 +1617,10 @@ pub fn start_dmavid_decode_hw(
             .push_next(&mut wait_timeline_info)];
         vulk.dev
             .queue_submit(queue.inner.queue, submits, vk::Fence::null())
-            .map_err(|_| "Queue submit failed")?; // <- can fail with OOM
+            .map_err(|_| "Queue submit failed")?;  
         drop(queue);
 
-        /* Unlock frame, now that command is submitted. (Note: unlocking before
-         * submission could risk timeline semaphore value updates and monotonicity
-         * violations */
+         
         avvulk.unlock_frame.as_ref().unwrap()(hwfc_ref, vkframe);
 
         let mut av_packet_ref = av_packet;
@@ -1671,8 +1628,8 @@ pub fn start_dmavid_decode_hw(
             .bindings
             .av_packet_free(std::ptr::from_mut(&mut av_packet_ref));
 
-        // av_hwframe_transfer_data: does not work, width/height do not match
-        // (and dmabuf sharing does not have a reliable way to have "display" dimensions <= "allocated" dimensions)
+         
+         
 
         let mut frame_ref: *mut AVFrame = frame;
         video.bindings.av_frame_free(&mut frame_ref);
@@ -1734,7 +1691,7 @@ pub fn start_dmavid_decode_sw(
         let view_v = buf_v.get_write_view();
 
         {
-            // TODO: avoid this copy by implementing AVCodecContext.get_buffer2
+             
             let ydata: &[u8] = &*slice_from_raw_parts((*frame).data[0], ystride * ext_h);
             let udata: &[u8] = &*slice_from_raw_parts((*frame).data[1], ustride * (ext_h / 2));
             let vdata: &[u8] = &*slice_from_raw_parts((*frame).data[2], vstride * (ext_h / 2));
@@ -1759,7 +1716,7 @@ pub fn start_dmavid_decode_sw(
                 .descriptor_count(3)
                 .ty(vk::DescriptorType::UNIFORM_TEXEL_BUFFER),
         ];
-        // at most 1 descriptor set
+         
         let pool_storage_info = vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(1)
@@ -1787,7 +1744,7 @@ pub fn start_dmavid_decode_sw(
             .buffer(buf_y.buffer)
             .format(vk::Format::R8_UNORM)
             .offset(0)
-            .range(vk::WHOLE_SIZE); // todo: with buffer pooling, precise size will need specifying
+            .range(vk::WHOLE_SIZE);  
         let buf_u_image_view_info = vk::BufferViewCreateInfo::default()
             .flags(vk::BufferViewCreateFlags::empty())
             .buffer(buf_u.buffer)
@@ -1868,8 +1825,8 @@ pub fn start_dmavid_decode_sw(
         let target_layout = vk::ImageLayout::GENERAL;
 
         let mut img_inner = state.target.inner.lock().unwrap();
-        // note: original contents of image do not need to be preserved as
-        // all pixels should be written; can the queue transfer be skipped?
+         
+         
         let entry_barriers = &[qfot_acquire_image_memory_barrier(
             state.target.image,
             img_inner.image_layout,
@@ -1955,7 +1912,7 @@ pub fn start_dmavid_decode_sw(
         let ygroups = state.target.height.div_ceil(8);
         vulk.dev.cmd_dispatch(cb, xgroups, ygroups, 1);
 
-        // Only for main image; other barriers are
+         
         let exit_barriers = &[qfot_release_image_memory_barrier(
             state.target.image,
             target_layout,
@@ -1983,8 +1940,7 @@ pub fn start_dmavid_decode_sw(
         let mut queue = vulkan_lock_queue(vulk);
         queue.inner.last_semaphore_value += 1;
         let completion_time_point = queue.inner.last_semaphore_value;
-        /* Signal vkframe's semaphore to indicate when this operation is done,
-         * and main semaphore to notify main loop. */
+         
         let signal_values = &[completion_time_point];
         let signal_semaphores = &[vulk.semaphore];
 
@@ -1999,7 +1955,7 @@ pub fn start_dmavid_decode_sw(
             .push_next(&mut wait_timeline_info)];
         vulk.dev
             .queue_submit(queue.inner.queue, submits, vk::Fence::null())
-            .map_err(|_| "Queue submit failed")?; // <- can fail with OOM
+            .map_err(|_| "Queue submit failed")?;  
         drop(queue);
 
         let mut av_packet_ref = av_packet;
@@ -2041,14 +1997,14 @@ pub fn start_dmavid_apply(
     }
 }
 
-/* kv must contain _null terminated_ strings */
+ 
 fn build_av_dict(bindings: &ffmpeg, kv: &[(&[u8], &[u8])]) -> Result<*mut AVDictionary, String> {
     let mut options = std::ptr::null_mut();
     for (k, v) in kv.iter() {
         assert!(k.ends_with(&[0]) && v.ends_with(&[0]));
         unsafe {
-            // SAFETY: null termination verified;
-            // todo:
+             
+             
             let r = bindings.av_dict_set(
                 &mut options,
                 k.as_ptr() as *const c_char,
@@ -2118,7 +2074,7 @@ pub fn setup_video_encode_hw(
             cr.width = frame_width;
             cr.height = frame_height;
 
-            /* Arbitrary, since Waypipe currently does per-buffer video instead of per-surface */
+             
             let nom_fps = 100;
             cr.time_base = AVRational {
                 num: 1,
@@ -2129,21 +2085,21 @@ pub fn setup_video_encode_hw(
                 den: 1,
             };
 
-            /* Streaming, no latency, only I and P frames */
+             
             cr.delay = 0;
             cr.max_b_frames = 0;
 
-            // todo: instead of bpf, use a 'bpp' -- bits-per-pixel equivalent, which scales
-            // properly with image size. Or crf?
+             
+             
             let b = bpf.unwrap_or(1e5);
-            // todo: sanity checks
+             
             cr.bit_rate = (b * (nom_fps as f32)) as i64;
 
             cr.pix_fmt = AVPixelFormat_AV_PIX_FMT_VULKAN;
-            // cr.color_range = AVColorRange_AVCOL_RANGE_MPEG;
+             
         }
 
-        /* Encoder specific options */
+         
         let mut options = build_av_dict(
             &video.bindings,
             &[
@@ -2202,7 +2158,7 @@ pub fn setup_video_encode_sw(
             cr.width = frame_width;
             cr.height = frame_height;
 
-            /* Arbitrary, since Waypipe currently does per-buffer video instead of per-surface */
+             
             let nom_fps = 100;
             cr.time_base = AVRational {
                 num: 1,
@@ -2213,21 +2169,21 @@ pub fn setup_video_encode_sw(
                 den: 1,
             };
 
-            /* Streaming, no latency, only I and P frames */
+             
             cr.delay = 0;
             cr.max_b_frames = 0;
 
-            // todo: instead of bpf, use a 'bpp' -- bits-per-pixel equivalent, which scales
-            // properly with image size. Or crf?
+             
+             
             let b = bpf.unwrap_or(1e5);
-            // todo: sanity checks
+             
             cr.bit_rate = (b * (nom_fps as f32)) as i64;
 
             cr.pix_fmt = AVPixelFormat_AV_PIX_FMT_YUV420P;
-            // cr.color_range = AVColorRange_AVCOL_RANGE_MPEG;
+             
         }
 
-        /* Encoder specific options. In general, minimize latency */
+         
         let mut options = match fmt {
             VideoFormat::H264 => build_av_dict(
                 &video.bindings,
@@ -2328,7 +2284,7 @@ pub fn start_dmavid_encode_hw(
             .as_mut()
             .unwrap();
         let vkframe = ((*frame).data[0]).cast::<AVVkFrame>().as_mut().unwrap();
-        /* Lock frame, to prevent concurrent modifications */
+         
         vk_fc.lock_frame.as_ref().unwrap()(hwfc_ref, vkframe);
 
         assert!(vk_fc.format[0] == vk::Format::G8_B8R8_2PLANE_420_UNORM.as_raw() as _);
@@ -2336,7 +2292,7 @@ pub fn start_dmavid_encode_hw(
             .iter()
             .all(|x| vk::Image::from_raw(*x as _).is_null()));
 
-        /* Blocking wait for semaphores; remove this later */
+         
         let mut wait_sems = vec![vk::Semaphore::from_raw(vkframe.sem[0] as _)];
         let mut wait_values = vec![vkframe.sem_value[0]];
         wait_sems.extend(wait_semaphores.iter().map(|x| x.0.semaphore));
@@ -2355,7 +2311,7 @@ pub fn start_dmavid_encode_hw(
                 .descriptor_count(2)
                 .ty(vk::DescriptorType::STORAGE_IMAGE),
         ];
-        // at most 1 descriptor set
+         
         let pool_storage_info = vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(1)
@@ -2421,8 +2377,8 @@ pub fn start_dmavid_encode_hw(
             .allocate_command_buffers(&alloc_cb_info)
             .map_err(|_| "Failed to allocate command buffers")?;
         let cb = cbvec[0];
-        // TODO: figure out proper pipeline barriers & queue transfers
-        // want image memory barriers on all three images
+         
+         
 
         let cb_info =
             vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::empty());
@@ -2454,7 +2410,7 @@ pub fn start_dmavid_encode_hw(
             &[],
             entry_barriers,
         );
-        /* Set staging image layout and discard old contents */
+         
         let staging_entry_barriers = &[
             image_layout_transition(
                 state_data.plane_images[0],
@@ -2503,7 +2459,7 @@ pub fn start_dmavid_encode_hw(
             0,
             &push_u8,
         );
-        /* Fill every pixel of the Y and CbCr planes */
+         
         assert!(hwfc_ref.width % 16 == 0);
         assert!(hwfc_ref.height % 16 == 0);
         let xgroups = (hwfc_ref.width / 16) as u32;
@@ -2609,7 +2565,7 @@ pub fn start_dmavid_encode_hw(
             copy_plane_2,
         );
 
-        // ffmpeg will handle barriers / layout transitions for the vkframe
+         
         img_inner.image_layout = vk::ImageLayout::GENERAL;
         vkframe.layout[0] = dst_layout.as_raw() as _;
 
@@ -2617,14 +2573,13 @@ pub fn start_dmavid_encode_hw(
             .end_command_buffer(cb)
             .map_err(|_| "Failed to end command buffer")?;
 
-        /* Wait for _everything_ to complete -- do not know if graphics/compute/decode is last */
-        // vkframe.access not used?
+         
+         
         let waitv_stage_flags = vec![vk::PipelineStageFlags::ALL_COMMANDS; wait_values.len()];
         let cbs = &[cb];
 
         vkframe.sem_value[0] += 1;
-        /* Signal vkframe's semaphore to indicate when this operation is done,
-         * and main semaphore to notify main loop. */
+         
         let signal_values = &[vkframe.sem_value[0]];
         let signal_semaphores = &[wait_sems[0]];
 
@@ -2641,12 +2596,10 @@ pub fn start_dmavid_encode_hw(
         let queue = vulkan_lock_queue(vulk);
         vulk.dev
             .queue_submit(queue.inner.queue, submits, vk::Fence::null())
-            .map_err(|_| "Queue submit failed")?; // <- can fail with OOM
+            .map_err(|_| "Queue submit failed")?;  
         drop(queue);
 
-        /* Unlock frame, now that command is submitted. (Note: unlocking before
-         * submission could risk timeline semaphore value updates and monotonicity
-         * violations */
+         
         vk_fc.unlock_frame.as_ref().unwrap()(hwfc_ref, vkframe);
 
         avcodec_send_frame(&video.bindings, enc_inner.ctx, frame)?;
@@ -2655,7 +2608,7 @@ pub fn start_dmavid_encode_hw(
 
         avcodec_receive_packet(&video.bindings, enc_inner.ctx, packet)?;
 
-        /* Cleanup; receiving packet should mean preceding operation is entirely done? */
+         
         let inner_pool = pool.pool.lock().unwrap();
         vulk.dev.free_command_buffers(*inner_pool, &[cb]);
         vulk.dev
@@ -2696,7 +2649,7 @@ pub fn start_dmavid_encode_sw(
         }
 
         let enc_inner = state.inner.lock().unwrap();
-        // Y plane
+         
         let ext_w = (*enc_inner.ctx).width as usize;
         let ext_h = (*enc_inner.ctx).height as usize;
         assert!(ext_w % 2 == 0 && ext_h % 2 == 0);
@@ -2704,8 +2657,8 @@ pub fn start_dmavid_encode_sw(
         let mut w: i32 = (*enc_inner.ctx).width;
         let mut h: i32 = (*enc_inner.ctx).height;
         let mut line_alignments: [i32; AV_NUM_DATA_POINTERS as usize] = [0, 0, 0, 0, 0, 0, 0, 0];
-        // todo: variable alignment?
-        // TODO: can be computed _once_ and cached
+         
+         
         video.bindings.avcodec_align_dimensions2(
             enc_inner.ctx,
             &mut w,
@@ -2715,10 +2668,10 @@ pub fn start_dmavid_encode_sw(
         assert!(w as usize == ext_w);
         assert!(h as usize >= ext_h);
 
-        // TODO: handle ffmpeg extra height request to allow overreading
-        let stride_y = align(ext_w, line_alignments[0].try_into().unwrap()); // 1bpp, no subsampling
-        let stride_u = align(ext_w / 2, line_alignments[1].try_into().unwrap()); // 1bpp and 2x subsampled
-        let stride_v = align(ext_w / 2, line_alignments[2].try_into().unwrap()); // 1bpp and 2x subsampled
+         
+        let stride_y = align(ext_w, line_alignments[0].try_into().unwrap());  
+        let stride_u = align(ext_w / 2, line_alignments[1].try_into().unwrap());  
+        let stride_v = align(ext_w / 2, line_alignments[2].try_into().unwrap());  
 
         let buf_y = vulkan_get_buffer(&state.target.vulk, stride_y * ext_h, true)?;
         let buf_u = vulkan_get_buffer(&state.target.vulk, stride_u * (ext_h / 2), true)?;
@@ -2732,7 +2685,7 @@ pub fn start_dmavid_encode_sw(
                 .descriptor_count(3)
                 .ty(vk::DescriptorType::STORAGE_TEXEL_BUFFER),
         ];
-        // at most 1 descriptor set
+         
         let pool_storage_info = vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(1)
@@ -2757,7 +2710,7 @@ pub fn start_dmavid_encode_sw(
             .buffer(buf_y.buffer)
             .format(vk::Format::R8_UNORM)
             .offset(0)
-            .range(vk::WHOLE_SIZE); // todo: with buffer pooling, precise size will need specifying
+            .range(vk::WHOLE_SIZE);  
         let buf_u_image_view_info = vk::BufferViewCreateInfo::default()
             .flags(vk::BufferViewCreateFlags::empty())
             .buffer(buf_u.buffer)
@@ -2832,8 +2785,8 @@ pub fn start_dmavid_encode_sw(
             .allocate_command_buffers(&alloc_cb_info)
             .map_err(|_| "Failed to allocate command buffers")?;
         let cb = cbvec[0];
-        // TODO: figure out proper pipeline barriers & queue transfers
-        // want image memory barriers on all three images
+         
+         
 
         let cb_info =
             vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::empty());
@@ -2889,14 +2842,14 @@ pub fn start_dmavid_encode_sw(
             &push_u8,
         );
 
-        /* Fill every pixel of the Y and CbCr planes */
+         
         assert!(ext_w % 16 == 0);
         assert!(ext_h % 16 == 0);
         let xgroups = (ext_w / 16) as u32;
         let ygroups = (ext_h / 16) as u32;
         vulk.dev.cmd_dispatch(cb, xgroups, ygroups, 1);
 
-        // Only for main image; buffers
+         
         let exit_barriers = &[qfot_release_image_memory_barrier(
             state.target.image,
             target_layout,
@@ -2954,10 +2907,10 @@ pub fn start_dmavid_encode_sw(
             .end_command_buffer(cb)
             .map_err(|_| "Failed to end command buffer")?;
 
-        /* Wait for _everything_ to complete -- do not know if graphics/compute/decode is last */
+         
         let cbs = &[cb];
 
-        // todo: deduplicate with `start_copy_segments_from_dmabuf`, and structure to reduce allocations
+         
         let mut waitv_values: Vec<u64> = wait_semaphores.iter().map(|x| x.1).collect();
         let mut waitv_semaphores: Vec<vk::Semaphore> =
             wait_semaphores.iter().map(|x| x.0.semaphore).collect();
@@ -2981,7 +2934,7 @@ pub fn start_dmavid_encode_sw(
         let queue = vulkan_lock_queue(vulk);
         vulk.dev
             .queue_submit(queue.inner.queue, submits, vk::Fence::null())
-            .map_err(|_| "Queue submit failed")?; // <- can fail with OOM
+            .map_err(|_| "Queue submit failed")?;  
 
         vulk.dev
             .queue_wait_idle(queue.inner.queue)
@@ -3009,19 +2962,19 @@ pub fn start_dmavid_encode_sw(
         (*frame).data[1] = view_u.data.as_ptr() as *mut u8;
         (*frame).data[2] = view_v.data.as_ptr() as *mut u8;
 
-        // TODO: refcounting frame may avoid ffmpeg-side copies?
+         
         avcodec_send_frame(&video.bindings, enc_inner.ctx, frame)?;
 
         let mut packet: *mut AVPacket = video.bindings.av_packet_alloc();
 
         avcodec_receive_packet(&video.bindings, enc_inner.ctx, packet)?;
 
-        /* Keep frame data alive until processing is done? TODO: what does ffmpeg require? It might want to hold onto the frame a bit longer */
+         
         drop(view_y);
         drop(view_u);
         drop(view_v);
 
-        /* Cleanup; receiving packet should mean preceding operation is entirely done? */
+         
         let inner_pool = pool.pool.lock().unwrap();
         vulk.dev.free_command_buffers(*inner_pool, &[cb]);
         vulk.dev
@@ -3041,7 +2994,7 @@ pub fn start_dmavid_encode_sw(
         let mut f = frame;
         video.bindings.av_frame_free(&mut f);
 
-        // TODO: allocate the packet data ourselves, using AVCodecContext.get_encode_buffer
+         
         let data = std::slice::from_raw_parts((*packet).data, (*packet).size.try_into().unwrap());
         let mut packet_data = Vec::<u8>::new();
         packet_data.extend_from_slice(data);
@@ -3064,12 +3017,12 @@ pub fn start_dmavid_encode(
     }
 }
 
-/* Fill with specified RGB color */
+ 
 #[cfg(test)]
 fn fill_with_color(w: usize, h: usize, format: u32, color: (f32, f32, f32)) -> Vec<u8> {
     use crate::wayland_gen::*;
 
-    /* using: byte order of channels */
+     
     fn pack8888(b0: f32, b1: f32, b2: f32, b3: f32) -> [u8; 4] {
         [
             (b0 * 255.0).clamp(0., 255.0).round() as u8,
@@ -3100,7 +3053,7 @@ fn fill_with_color(w: usize, h: usize, format: u32, color: (f32, f32, f32)) -> V
 fn get_average_color(w: usize, h: usize, format: u32, data: &[u8]) -> (f32, f32, f32) {
     use crate::wayland_gen::*;
 
-    /* from: byte order of channels -> rgb */
+     
     fn swizzle_bgrx(x: (f32, f32, f32, f32)) -> (f32, f32, f32) {
         (x.2, x.1, x.0)
     }
@@ -3140,12 +3093,12 @@ fn get_average_color(w: usize, h: usize, format: u32, data: &[u8]) -> (f32, f32,
 fn test_video(try_hardware: bool) {
     let _serialize_test = VULKAN_MUTEX.lock().unwrap();
 
-    /* A crude error metric */
+     
     fn color_error(x: (f32, f32, f32), y: (f32, f32, f32)) -> f32 {
         (x.0 - y.0).abs() + (x.1 - y.1).abs() + (x.2 - y.2).abs()
     }
 
-    // debug disabled as libavcodec logging escapes test framework
+     
     let debug = false;
 
     for dev_id in list_render_device_ids() {
@@ -3155,7 +3108,7 @@ fn test_video(try_hardware: bool) {
             CodecPreference::SW
         });
         let vid_setting = VideoSetting {
-            format: Some(VideoFormat::H264), /* the actual format given here does not matter */
+            format: Some(VideoFormat::H264),  
             bits_per_frame: None,
             enc_pref: pref,
             dec_pref: pref,
@@ -3170,7 +3123,7 @@ fn test_video(try_hardware: bool) {
 
         println!("Setup complete for device id {}", dev_id);
 
-        /* Test relatively small image sizes, since many formats will be tested */
+         
         let sizes: [(usize, usize); 2] = [(63, 65), (1, 1)];
 
         for video_format in [VideoFormat::H264, VideoFormat::VP9, VideoFormat::AV1] {
@@ -3181,8 +3134,7 @@ fn test_video(try_hardware: bool) {
                         continue 'scan;
                     }
                 }
-                /* no point in testing all modifiers for all video formats, since the intermediate
-                 * copy step does not depend on the format. So only do this in one case. */
+                 
                 if video_format == VideoFormat::H264 && !try_hardware {
                     let mut first = false;
                     for m in vulk.get_supported_modifiers(*f) {
@@ -3271,10 +3223,10 @@ fn test_video(try_hardware: bool) {
                         let check_err = color_error(*color, check);
                         let rtrip_err = color_error(*color, output);
 
-                        /* Verify that the video encoding gets the color relatively close */
+                         
                         assert!(check_err <= 0.1);
                         if !try_hardware {
-                            // As of writing, H264+radeon hardware video decoding fails on <=32x32 images
+                             
                             let thresh = if video_format == VideoFormat::AV1 {
                                 0.2
                             } else {

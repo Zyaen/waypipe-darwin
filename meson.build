@@ -92,10 +92,10 @@ if get_option('build_rs')
         version: '>=11.0.0',  # gbm is part of Mesa and has a matching version
         required: get_option('with_gbm'),
     )
-    if bindgen.found() and libzstd.found()
-        has_zstd = true
-        features += ['gbmfallback']
-    endif
+    # if bindgen.found() and libzstd.found() and libgbm.found()
+    #     has_zstd = true
+    #     features += ['gbmfallback']
+    # endif
     glslc = find_program(
         'glslc',
         native: true,

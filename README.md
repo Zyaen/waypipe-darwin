@@ -1,5 +1,12 @@
-Waypipe
+Waypipe-Darwin
 ================================================================================
+
+> [!NOTE]
+> **Waypipe-Darwin**: This is a specialized fork of Waypipe optimized for **macOS (Darwin)**.
+> It includes critical patches for:
+> *   **Shared Memory**: Replaced `memfd_create` with temporary file-based SHM for Darwin kernel compatibility.
+> *   **Sockets**: Fixed unnamed socket handling.
+> *   **Stability**: Patched logging path handling to prevent crashes.
 
 `waypipe` is a proxy for [Wayland][l0] clients. It forwards Wayland messages and
 serializes changes to shared memory buffers over a single socket. This makes

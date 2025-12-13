@@ -1,21 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Protocol test runner and framework.
- *
- * Emulate a Wayland client/compositor pair and verify that Waypipe properly
- * forwards messages and file descriptors.
- *
- * This is needed to:
- * - Properly capture debug output from processes under test
- * - Run Waypipe instances as individual processes instead of threads (to avoid
- *   possible bugs if Vulkan validation layers are used for independent instances)
- * - Test different versions of Waypipe against each other.
- * - Break out test variants by the Vulkan physical device being used
- */
+ 
+ 
 
 use clap::{value_parser, Arg, ArgAction, Command as ClapCommand};
 use nix::libc;
 use nix::sys::wait::WaitStatus;
-use nix::sys::{memfd, signal, socket, time, wait};
+use nix::sys::{signal, socket, time, wait};
 use nix::{errno::Errno, fcntl, poll, unistd};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -35,7 +24,7 @@ mod platform;
 #[allow(dead_code)]
 mod util;
 #[allow(dead_code)]
-mod video; /* Only included because it is required by 'video' */
+mod video;  
 #[allow(dead_code)]
 mod wayland;
 mod wayland_gen;
@@ -48,60 +37,59 @@ use util::*;
 use wayland::*;
 use wayland_gen::*;
 
-/** Test result codes for which error-type control flow is not needed. */
+ 
 #[derive(Debug)]
 enum StatusOk {
-    /** Corresponds to [TestCategory::Pass] */
+     
     Pass,
-    /** Corresponds to [TestCategory::Skipped] */
+     
     Skipped,
 }
-/** Test result codes which, like errors, typically are worth stopping a test over. */
+ 
 #[derive(Debug)]
 enum StatusBad {
-    /** Corresponds to [TestCategory::Unclear] */
+     
     Unclear(String),
-    /** Corresponds to [TestCategory::Fail] */
+     
     Fail(String),
 }
-/** Result of a test, organized so that StatusBad can be progated with ? */
+ 
 type TestResult = Result<StatusOk, StatusBad>;
 
-/** The result of a test. */
+ 
 #[derive(Debug)]
 enum TestCategory {
-    /** Test passed */
+     
     Pass,
-    /** Test was skipped. */
+     
     Skipped,
-    /** Test failed */
+     
     Fail,
-    /** Something was broken, but it may be an issue in a library used by Waypipe */
+     
     Unclear,
 }
-/** 77 is the automake return code for a skipped test */
+ 
 const EXITCODE_SKIPPED: u8 = 77;
-/** 99 is the automake return code for a hard error (failure of test set up,
- * segfault, failure of an external library, or something else very unexpected) */
+ 
 const EXITCODE_UNCLEAR: u8 = 99;
 
-/** Specifications for a filter of test names. */
+ 
 struct Filter<'a> {
     substrings: &'a [&'a str],
     exact: bool,
 }
 
-/** Basic parameters needed to run a test. */
+ 
 struct TestInfo<'a> {
-    /** The name of the test. */
+     
     test_name: &'a str,
-    /** File to execute (posix_spawnp) for the `waypipe client` connection handling instance. */
+     
     waypipe_client: &'a OsStr,
-    /** File to execute (posix_spawnp) for the `waypipe server` connection handling instance. */
+     
     waypipe_server: &'a OsStr,
 }
 
-/** A constant that saves some code when allocating sequentual object ids */
+ 
 const ID_SEQUENCE: [ObjId; 12] = [
     ObjId(1),
     ObjId(2),
@@ -117,11 +105,7 @@ const ID_SEQUENCE: [ObjId; 12] = [
     ObjId(12),
 ];
 
-/** Write messages to the Wayland connection, followed by a test message that should directly pass through;
- * possibly stopping early if the connection is closed.
- *
- * Returns: the messages received on the other end, minus the test message; if there was an error details
- * will be returned */
+ 
 fn test_interact(
     prog: &OwnedFd,
     comp: &OwnedFd,
@@ -139,7 +123,7 @@ fn test_interact(
 
     let raw_fds: Vec<i32> = fds.iter().map(|x| x.as_raw_fd()).collect();
 
-    /* Not: libwayland sends up to 28 fds per byte */
+     
     const MAX_FDS_PER_BYTE: usize = 32;
     assert!(data.len() >= fds.len().div_ceil(MAX_FDS_PER_BYTE));
 
@@ -200,7 +184,7 @@ fn test_interact(
             recvs.push(&mut recv_comp);
         }
 
-        /* Connections should not close before either error or end message is received */
+         
         assert!(
             !pfds.is_empty(),
             "connections should not close before error or end message received"
@@ -234,8 +218,8 @@ fn test_interact(
                                     for f in &tfds {
                                         assert!(*f != -1);
                                         recv.fds.push(unsafe {
-                                            // SAFETY: fd was just created, checked valid,
-                                            // and is recorded nowhere else
+                                             
+                                             
                                             OwnedFd::from_raw_fd(*f)
                                         });
                                     }
@@ -260,7 +244,7 @@ fn test_interact(
                     }
                 }
 
-                /* Extract any complete messages from stream */
+                 
                 let mut tail: &[u8] = &recv.data;
                 while tail.len() >= 8 {
                     let (_obj_id, length, _opcode) = parse_wl_header(tail);
@@ -279,7 +263,7 @@ fn test_interact(
             }
 
             if evt.contains(poll::PollFlags::POLLOUT) {
-                /* Only the writing side checks for POLLOUT, so write messages here */
+                 
                 let iovs_long = [
                     IoSlice::new(&data[std::cmp::min(nbytes_sent, data.len())..]),
                     IoSlice::new(&end_msg[(std::cmp::max(nbytes_sent, data.len()) - data.len())..]),
@@ -332,7 +316,7 @@ fn test_interact(
         for (i, msg) in opp_recv.rmsgs.iter().enumerate() {
             let (obj_id, _length, opcode) = parse_wl_header(msg);
             if obj_id == ObjId(u32::MAX) && opcode == 0 {
-                /* encountered pass-through message; stop, are done */
+                 
                 opp_recv.rmsgs.remove(i);
                 break 'outer;
             }
@@ -341,7 +325,7 @@ fn test_interact(
         for msg in &recv_prog.rmsgs {
             let (obj_id, _length, opcode) = parse_wl_header(msg);
             if obj_id == ObjId(1) && MethodId::Event(opcode) == OPCODE_WL_DISPLAY_ERROR {
-                /* encountered error message; stop and return error */
+                 
                 let (obj, code, msg) = parse_evt_wl_display_error(msg).unwrap();
                 err = Some((obj, code, String::from_utf8(Vec::from(msg)).unwrap()));
                 break 'outer;
@@ -360,9 +344,7 @@ fn test_interact(
     }
 }
 
-/** Write messages to the Wayland connection, followed by a test message that should directly pass through;
- * possibly stopping early if the connection is closed. (Note: in that case, test_read_msgs should
- * capture an error message). */
+ 
 fn test_write_msgs(socket: &OwnedFd, data: &[u8], fds: &[&OwnedFd]) {
     let mut end_msg = [0_u8; 8];
     let mut end_msg_view: &mut [u8] = &mut end_msg;
@@ -447,14 +429,14 @@ fn test_write_msgs(socket: &OwnedFd, data: &[u8], fds: &[&OwnedFd]) {
     }
 }
 
-/** Buffer holding data read from a socket and whether the connection has closed. */
+ 
 struct ReadRecv {
     data: Vec<u8>,
     fds: Vec<OwnedFd>,
     eof: bool,
 }
 
-/** Read data/fds from a socket, and return true on EOF. */
+ 
 fn test_read_from_socket(socket: BorrowedFd, recv: &mut ReadRecv) -> bool {
     let mut tmp = vec![0u8; 16384];
     let mut iovs = [IoSliceMut::new(&mut tmp)];
@@ -474,8 +456,8 @@ fn test_read_from_socket(socket: BorrowedFd, recv: &mut ReadRecv) -> bool {
                         for f in &tfds {
                             assert!(*f != -1);
                             recv.fds.push(unsafe {
-                                // SAFETY: fd was just created, checked valid,
-                                // and is recorded nowhere else
+                                 
+                                 
                                 OwnedFd::from_raw_fd(*f)
                             });
                         }
@@ -498,8 +480,7 @@ fn test_read_from_socket(socket: BorrowedFd, recv: &mut ReadRecv) -> bool {
     }
 }
 
-/** Read messages from the Wayland connection, until an error is returned or the test message is found.
- * If opposite_fd is not None, then it is the program-side socket and will receive wl_display_error. */
+ 
 fn test_read_msgs(
     socket: &OwnedFd,
     opposite_socket: Option<&OwnedFd>,
@@ -562,7 +543,7 @@ fn test_read_msgs(
             assert!(length >= 8 && length % 4 == 0);
 
             if obj_id == ObjId(u32::MAX) && opcode == 0 {
-                /* encountered pass-through message; we are done */
+                 
                 break 'outer;
             }
 
@@ -602,8 +583,7 @@ fn test_read_msgs(
     (msgs, fds, err)
 }
 
-/** Helper function to return a `Vec<u8>`, given a function that builds its
- * contents by writing to a `&mut &mut [u8]`. Used to build Wayland message sequences. */
+ 
 fn build_msgs<F>(f: F) -> Vec<u8>
 where
     F: FnOnce(&mut &mut [u8]),
@@ -616,7 +596,7 @@ where
     Vec::from(&buf[..nwritten])
 }
 
-/** Return true iff the interaction result in `x` matches concatenated messages `concat`. */
+ 
 fn is_plain_msgs(
     x: Result<(Vec<Vec<u8>>, Vec<OwnedFd>), (ObjId, u32, String)>,
     concat: Vec<u8>,
@@ -628,14 +608,14 @@ fn is_plain_msgs(
     }
 }
 
-/** Things needed for the test program to interact with a linked pair of Waypipe instances. */
+ 
 struct ProtocolTestContext {
     sock_prog: OwnedFd,
     sock_comp: OwnedFd,
 }
 
 impl ProtocolTestContext {
-    /** Write data and fds to the program-side Waypipe instance, and return the resulting messages or error message. */
+     
     fn prog_write(
         &mut self,
         data: &[u8],
@@ -648,7 +628,7 @@ impl ProtocolTestContext {
             Ok((msg, ofds))
         }
     }
-    /** Write data and fds to the compositor-side Waypipe instance, and return the resulting messages or error message. */
+     
     fn comp_write(
         &mut self,
         data: &[u8],
@@ -661,17 +641,17 @@ impl ProtocolTestContext {
             Ok((msg, ofds))
         }
     }
-    /** Write messages to a program-side Waypipe instance, and panic if they are not passed through unchanged. */
+     
     fn prog_write_passthrough(&mut self, data: Vec<u8>) {
         assert!(is_plain_msgs(self.prog_write(&data, &[]), data));
     }
-    /** Write messages to a compositor-side Waypipe instance, and panic if they are not passed through unchanged. */
+     
     fn comp_write_passthrough(&mut self, data: Vec<u8>) {
         assert!(is_plain_msgs(self.comp_write(&data, &[]), data));
     }
 }
 
-/** Options to be passed to an instance of Waypipe */
+ 
 struct WaypipeOptions<'a> {
     wire_version: Option<u32>,
     drm_node: Option<u64>,
@@ -681,13 +661,13 @@ struct WaypipeOptions<'a> {
     compression: Compression,
 }
 
-/** Construct the command to run a Waypipe connection handling process, with specified options. */
+ 
 fn build_arguments(waypipe_bin: &OsStr, opts: &WaypipeOptions, is_client: bool) -> Vec<String> {
     let mut v = Vec::new();
 
     let cross_runner = std::env::var_os("CROSS_TARGET_RUNNER");
     let cx: &OsStr = cross_runner.as_deref().unwrap_or_default();
-    /* note: CROSS_TARGET_RUNNER is typically something like 'CROSS_TARGET_RUNNER=/linux-runner aarch64' */
+     
     for chunk in cx.as_encoded_bytes().split(|x| *x == b' ') {
         if !chunk.is_empty() {
             v.push(std::str::from_utf8(chunk).unwrap().into());
@@ -724,7 +704,7 @@ fn build_arguments(waypipe_bin: &OsStr, opts: &WaypipeOptions, is_client: bool) 
     v
 }
 
-/** Run a protocol test with the specified options. */
+ 
 fn run_protocol_test_with_opts(
     info: &TestInfo,
     opts_client: &WaypipeOptions,
@@ -793,8 +773,8 @@ fn run_protocol_test_with_opts(
     };
     test_fn(ctx);
 
-    /* Wait for processes to die */
-    // todo: this needs a 1 second timeout to properly catch deadlocked processes
+     
+     
     let exit_c = client.wait().unwrap();
     let exit_s = server.wait().unwrap();
     if !exit_s.success() || !exit_c.success() {
@@ -810,7 +790,7 @@ fn run_protocol_test_with_opts(
     Ok(())
 }
 
-/** Run a protocol test with both sides of the connection using the DRM node for `device`. */
+ 
 #[cfg(feature = "dmabuf")]
 fn run_protocol_test_with_drm_node(
     info: &TestInfo,
@@ -828,7 +808,7 @@ fn run_protocol_test_with_drm_node(
     run_protocol_test_with_opts(info, &options, &options, test_fn)
 }
 
-/** Run a protocol test with default options. */
+ 
 fn run_protocol_test(
     info: &TestInfo,
     test_fn: &dyn Fn(ProtocolTestContext),
@@ -844,7 +824,7 @@ fn run_protocol_test(
     run_protocol_test_with_opts(info, &options, &options, test_fn)
 }
 
-/** Try to setup a Vulkan instance and device for the given `device_id`. */
+ 
 #[cfg(feature = "dmabuf")]
 fn setup_vulkan(device_id: u64) -> Result<Arc<VulkanDevice>, String> {
     let instance = setup_vulkan_instance(true, &VideoSetting::default(), false, false)?
@@ -855,12 +835,9 @@ fn setup_vulkan(device_id: u64) -> Result<Arc<VulkanDevice>, String> {
     ))
 }
 
-/** Return a memfd whose contents are precisely `data`. */
+ 
 fn make_file_with_contents(data: &[u8]) -> Result<OwnedFd, String> {
-    let local_fd = memfd::memfd_create(
-        c"/waypipe",
-        memfd::MFdFlags::MFD_CLOEXEC | memfd::MFdFlags::MFD_ALLOW_SEALING,
-    )
+    let local_fd = crate::util::create_anon_file()
     .map_err(|x| tag!("Failed to create memfd: {:?}", x))?;
     unistd::ftruncate(&local_fd, data.len().try_into().unwrap())
         .map_err(|x| tag!("Failed to resize memfd: {:?}", x))?;
@@ -870,14 +847,14 @@ fn make_file_with_contents(data: &[u8]) -> Result<OwnedFd, String> {
 
     Ok(local_fd)
 }
-/** Replace the contents of a memfd, whose length is already `data.len()`, with `data`. */
+ 
 fn update_file_contents(fd: &OwnedFd, data: &[u8]) -> Result<(), String> {
     let mapping = ExternalMapping::new(fd, data.len(), false)?;
     copy_onto_mapping(data, &mapping, 0);
     drop(mapping);
     Ok(())
 }
-/** Replace the conents of a memfd with `data`, changing the file size as needed. */
+ 
 fn resize_file_with_contents(fd: &OwnedFd, data: &[u8]) -> Result<(), String> {
     unistd::ftruncate(fd, data.len().try_into().unwrap())
         .map_err(|x| tag!("Failed to resize memfd: {:?}", x))?;
@@ -885,8 +862,7 @@ fn resize_file_with_contents(fd: &OwnedFd, data: &[u8]) -> Result<(), String> {
     copy_onto_mapping(data, &mapping, 0);
     Ok(())
 }
-/** Get the contents of the file, assuming its length is `len`. May error or SIGBUS if the actual
- * length is shorter */
+ 
 fn get_file_contents(fd: &OwnedFd, len: usize) -> Result<Vec<u8>, String> {
     let mapping = ExternalMapping::new(fd, len, true)?;
     let mut data = vec![0xff_u8; len];
@@ -895,7 +871,7 @@ fn get_file_contents(fd: &OwnedFd, len: usize) -> Result<Vec<u8>, String> {
     Ok(data)
 }
 
-/** Return true iff the name matches the given filter.  */
+ 
 fn test_is_included(name: &str, filter: &Filter) -> bool {
     if filter.substrings.is_empty() {
         return true;
@@ -914,7 +890,7 @@ fn test_is_included(name: &str, filter: &Filter) -> bool {
     false
 }
 
-/** Register a single test, if the name passes the filter. */
+ 
 fn register_single<'a>(
     tests: &mut Vec<(String, Box<dyn Fn(TestInfo) -> TestResult + 'a>)>,
     filter: &Filter,
@@ -929,7 +905,7 @@ fn register_single<'a>(
     tests.push((ext_name, Box::new(func)));
 }
 
-/** Register a test instance for each device in the list, if the resulting test name passes the filter. */
+ 
 fn register_per_device<'a>(
     tests: &mut Vec<(String, Box<dyn Fn(TestInfo) -> TestResult + 'a>)>,
     filter: &Filter,
@@ -973,24 +949,22 @@ enum RenderDeviceType {
     Vulkan,
 }
 
-/** Information about a render device. */
+ 
 struct RenderDevice<'a> {
     #[allow(unused)]
     name: &'a str,
     id: u64,
-    /** The device type for the _instances under test_ to use; test_proto itself,
-     * for now, uses Vulkan to handle buffers. */
+     
     device_type: RenderDeviceType,
 }
 
-/** List all render devices on this system. This just checks file properties
- * and does not test that they are actually usable. */
+ 
 pub fn list_vulkan_device_ids() -> Vec<(String, u64)> {
     use std::os::unix::ffi::OsStrExt;
 
     let mut dev_ids = Vec::new();
     let Ok(dir_iter) = std::fs::read_dir("/dev/dri") else {
-        /* On failure, assume Vulkan is not available */
+         
         return dev_ids;
     };
 
@@ -1009,10 +983,10 @@ pub fn list_vulkan_device_ids() -> Vec<(String, u64)> {
     dev_ids
 }
 
-/** No-op signal handler (used to ensure SIGCHLD interrupts poll) */
+ 
 extern "C" fn noop_signal_handler(_: i32) {}
 
-/** Test to verify that a simple message exchange behaves as expected */
+ 
 fn proto_basic(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let write_prog = build_msgs(|dst| {
@@ -1032,7 +1006,7 @@ fn proto_basic(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that using the base protocol version still works, for basic operations */
+ 
 fn proto_base_wire(info: TestInfo) -> TestResult {
     let opts = WaypipeOptions {
         wire_version: Some(MIN_PROTOCOL_VERSION),
@@ -1060,7 +1034,7 @@ fn proto_base_wire(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to verify that keymap files can be transferred reliably */
+ 
 fn proto_keymap(info: TestInfo) -> TestResult {
     for length in [0, 9, 4096, 300001] {
         run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
@@ -1127,8 +1101,7 @@ fn proto_keymap(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to verify that data for wp_image_description_creator_icc_v1::set_icc_file and
- * wp_image_description_info_v1::icc_file is correctly transferred */
+ 
 fn proto_icc(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let [display, registry, color_mgr, output, creator, color_output, desc, info, ..] =
@@ -1153,7 +1126,7 @@ fn proto_icc(info: TestInfo) -> TestResult {
             .collect();
         let base_fd = make_file_with_contents(&data).unwrap();
 
-        // Check that wp_image_description_creator_icc_v1::set_icc_file works
+         
         let msg_start = build_msgs(|dst| {
             write_req_wl_registry_bind(dst, registry, 2, WP_COLOR_MANAGER_V1, 1, color_mgr);
             write_req_wl_registry_bind(dst, registry, 1, WL_OUTPUT, 4, output);
@@ -1197,7 +1170,7 @@ fn proto_icc(info: TestInfo) -> TestResult {
                 == data[offset as usize..(offset + length) as usize]
         );
 
-        // Check that wp_image_description_info_v1::icc_file works
+         
         let cmsgs = build_msgs(|dst| {
             write_evt_wp_image_description_info_v1_icc_file(dst, info, false, length);
         });
@@ -1211,11 +1184,11 @@ fn proto_icc(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to verify that proper replication for wlr_gamma_control_unstable_v1 */
+ 
 fn proto_gamma_control(info: TestInfo) -> TestResult {
     let gamma_size: usize = 4096;
     const BYTES_PER_ENTRY: usize = 6;
-    let mut source_pattern = Vec::new(); /* Pattern for a single gamma ramp channel */
+    let mut source_pattern = Vec::new();  
     for i in 0..gamma_size {
         source_pattern.extend_from_slice(&u16::to_le_bytes(i as u16));
     }
@@ -1253,14 +1226,14 @@ fn proto_gamma_control(info: TestInfo) -> TestResult {
 
     let correct_length = gamma_size * BYTES_PER_ENTRY;
     let lengths = [
-        /* correct size */
+         
         gamma_size * BYTES_PER_ENTRY,
-        /* oversize: OK */
+         
         gamma_size * BYTES_PER_ENTRY * 2,
-        /* slightly undersize (typically zero extended) */
-        // gamma_size * BYTES_PER_ENTRY - 2,
-        /* very undersize (SIGBUS) */
-        // gamma_size,
+         
+         
+         
+         
     ];
 
     for length in lengths {
@@ -1320,16 +1293,14 @@ fn proto_gamma_control(info: TestInfo) -> TestResult {
                 let new_data = get_file_contents(&new_gamma_fd, correct_length).unwrap();
                 assert!(new_data == source_data[..correct_length]);
             } else {
-                /* Corruption, error message, or SIGBUS */
+                 
             }
         })?;
     }
     Ok(StatusOk::Pass)
 }
 
-/** Generate a stream of data using seed `seed`, and send the first `max_write` bytes of it (or as much as possible),
- * while receiving the first `max_read` bytes of it (or as much as possible), and check that the data read matches
- * what was sent. */
+ 
 fn check_pipe_transfer(
     pipe_w: OwnedFd,
     pipe_r: OwnedFd,
@@ -1385,7 +1356,7 @@ fn check_pipe_transfer(
                 };
 
                 match unistd::read(ord.as_ref().unwrap(), &mut tmp[..read_len]) {
-                    Err(Errno::EINTR) | Err(Errno::EAGAIN) => { /* do nothing */ }
+                    Err(Errno::EINTR) | Err(Errno::EAGAIN) => {   }
                     Err(Errno::ECONNRESET) | Err(Errno::ENOTCONN) => {
                         ord = None;
                     }
@@ -1394,12 +1365,12 @@ fn check_pipe_transfer(
                         if len > 0 {
                             recv.extend_from_slice(&tmp[..len]);
                         } else {
-                            /* nothing more to read */
+                             
                             ord = None;
                         }
                         if let Some(limit) = max_read {
                             if recv.len() >= limit {
-                                /* Stop reading, have read enough */
+                                 
                                 ord = None;
                             }
                         }
@@ -1408,7 +1379,7 @@ fn check_pipe_transfer(
             } else if evts.contains(poll::PollFlags::POLLHUP)
                 || evts.contains(poll::PollFlags::POLLERR)
             {
-                /* case: hangup, no pending data */
+                 
                 ord = None;
             }
         }
@@ -1427,7 +1398,7 @@ fn check_pipe_transfer(
                 assert!(to_send.len() > nwritten);
 
                 match unistd::write(owr.as_ref().unwrap(), &to_send[nwritten..]) {
-                    Err(Errno::EINTR) | Err(Errno::EAGAIN) => { /* do nothing */ }
+                    Err(Errno::EINTR) | Err(Errno::EAGAIN) => {   }
                     Err(Errno::EPIPE) | Err(Errno::ECONNRESET) => {
                         owr = None;
                     }
@@ -1443,19 +1414,18 @@ fn check_pipe_transfer(
         }
     }
 
-    /* Data received must be a prefix of data sent */
+     
     assert!(recv == to_send[..recv.len()]);
     if let Some(len) = max_read {
-        /* Should have read exactly the requested amount */
+         
         assert!(recv.len() == len);
     } else {
-        /* Should read all of input */
+         
         assert!(recv.len() == to_send.len());
     }
 }
 
-/** Test to check that basic pipe replication works for the various copy-paste type protocols, and
- * that the pipe replicated can be used to transfer various amounts of data. */
+ 
 fn proto_pipe_write(info: TestInfo) -> TestResult {
     let (display, registry, manager, seat, dev, source) =
         (ObjId(1), ObjId(2), ObjId(3), ObjId(4), ObjId(5), ObjId(6));
@@ -1467,7 +1437,7 @@ fn proto_pipe_write(info: TestInfo) -> TestResult {
     let wlr_name = ZWLR_DATA_CONTROL_MANAGER_V1;
     let mime = "text/plain;charset=utf-8".as_bytes();
 
-    /* Protocol sequences leading to a pipe receipt; in all cases the pipe is provided with the last message */
+     
     let ex_wl: &[Vec<u8>] = &[
         build_msgs(|dst| {
             write_req_wl_display_get_registry(dst, display, registry);
@@ -1571,7 +1541,7 @@ fn proto_pipe_write(info: TestInfo) -> TestResult {
 
     let (display, registry, manager, seat, dev, offer) =
         (ObjId(1), ObjId(2), ObjId(3), ObjId(4), ObjId(5), ObjId(6));
-    /* Protocol sequences leading to a pipe receipt; in all cases the pipe is provided with the last message */
+     
     let ex2_wl: &[Vec<u8>] = &[
         build_msgs(|dst| {
             write_req_wl_display_get_registry(dst, display, registry);
@@ -1716,7 +1686,7 @@ fn proto_pipe_write(info: TestInfo) -> TestResult {
             let pipe_w = ofds.remove(0);
 
             if *length < usize::MAX {
-                /* Send and receive a given length of message. */
+                 
                 check_pipe_transfer(
                     pipe_w,
                     pipe_r,
@@ -1725,18 +1695,18 @@ fn proto_pipe_write(info: TestInfo) -> TestResult {
                     if test_no == 5 { Some(*length) } else { None },
                 );
             } else {
-                /* Send infinite message, and receive only the first part */
+                 
                 check_pipe_transfer(pipe_w, pipe_r, test_no as u64, None, Some(50000));
             }
 
-            /* Pass through empty message to determine if there was an error */
+             
             ctx.comp_write_passthrough(Vec::new());
         })?;
     }
     Ok(StatusOk::Pass)
 }
 
-/** Test to verify that presentation time handling does not introduce major errors */
+ 
 fn proto_presentation_time(info: TestInfo) -> TestResult {
     for (pres_clock, fast_start) in [
         (libc::CLOCK_MONOTONIC as u32, true),
@@ -1819,9 +1789,7 @@ fn proto_presentation_time(info: TestInfo) -> TestResult {
             let output_ns =
                 1000000000 * (join_u64(tv_sec_hi, tv_sec_lo) as u128) + (tv_nsec as u128);
 
-            /* The time adjustment uses two XYX measurements, whose absolute error
-             * is ≤ half the elapsed time each, assuming the clocks run at the same
-             * rate and do not change. */
+             
             let max_time_error = end.duration_since(start).saturating_mul(2);
 
             let abs_diff = output_ns.abs_diff(init_time_ns);
@@ -1838,7 +1806,7 @@ fn proto_presentation_time(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to verify that presentation time handling does not introduce major errors */
+ 
 fn proto_commit_timing(info: TestInfo) -> TestResult {
     for pres_clock in [libc::CLOCK_MONOTONIC as u32, libc::CLOCK_REALTIME as u32] {
         run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
@@ -1904,9 +1872,7 @@ fn proto_commit_timing(info: TestInfo) -> TestResult {
             let output_ns =
                 1000000000 * (join_u64(new_sec_hi, new_sec_lo) as u128) + (new_nsec as u128);
 
-            /* The time adjustment uses two XYX measurements, whose absolute error
-             * is ≤ half the elapsed time each, assuming the clocks run at the same
-             * rate and do not change. */
+             
             let max_time_error = end.duration_since(start).saturating_mul(2);
 
             let abs_diff = output_ns.abs_diff(init_time_ns);
@@ -1922,8 +1888,7 @@ fn proto_commit_timing(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that an error is reported when a Wayland client attempts to make two objects
- * with the same ID at the same time. */
+ 
 fn proto_object_collision(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let (display, registry) = (ObjId(1), ObjId(2));
@@ -1940,7 +1905,7 @@ fn proto_object_collision(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to check that a wl_shm buffer can be created and its contents replicated. */
+ 
 fn proto_shm_buffer(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let (display, registry, shm, comp, surface, pool, buffer) = (
@@ -1968,7 +1933,7 @@ fn proto_shm_buffer(info: TestInfo) -> TestResult {
             write_req_wl_compositor_create_surface(dst, comp, surface);
         }));
 
-        /* First, simple test case: an empty shm pool, never modified */
+         
         let empty_fd = make_file_with_contents(&[]).unwrap();
         let msg = build_msgs(|dst| {
             write_req_wl_shm_create_pool(dst, shm, false, pool, 0);
@@ -1987,12 +1952,12 @@ fn proto_shm_buffer(info: TestInfo) -> TestResult {
             write_evt_wl_display_delete_id(dst, display, pool.0);
         }));
 
-        /* pools and images in various sizes */
+         
         for (w, h) in [(3, 3), (16, 16), (1023, 1025)] {
             let sz: usize = w * h;
             let mut data = vec![0; sz];
             let mut i: u8 = 0x80;
-            /* Draw a square inside */
+             
             for y in (h / 3)..(2 * h) / 3 {
                 for x in (w / 3)..(2 * w) / 3 {
                     data[y * w + x] = i;
@@ -2024,7 +1989,7 @@ fn proto_shm_buffer(info: TestInfo) -> TestResult {
             let output = get_file_contents(&output_fd, sz).unwrap();
             assert!(output == data);
 
-            /* Cleanup */
+             
             ctx.prog_write_passthrough(build_msgs(|dst| {
                 write_req_wl_shm_pool_destroy(dst, pool);
                 write_req_wl_buffer_destroy(dst, buffer);
@@ -2038,7 +2003,7 @@ fn proto_shm_buffer(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that wl_shm_pool::resize is handled correctly. */
+ 
 fn proto_shm_extend(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let (display, registry, shm, comp, surface, pool, buf_a, buf_b, buf_c) = (
@@ -2085,7 +2050,7 @@ fn proto_shm_extend(info: TestInfo) -> TestResult {
             let new_sz = w * h * 8 * nblocks;
             let mut img_data = vec![0u8; new_sz];
             for k in 0..nblocks {
-                /* Fill with gradient */
+                 
                 let block_data = &mut img_data[(w * h * 8 * k)..(w * h * 8 * (k + 1))];
                 for j in 0..(w * h) {
                     for h in 0..4 {
@@ -2127,10 +2092,7 @@ fn proto_shm_extend(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Helper function: _process_ dmabuf_feedback events for the given `feedback` object, and
- * return the map of format-modifier combinations supported by the program-side Waypipe
- * instance. `format_table` should be, and will be updated to, the most recently received
- * format table. */
+ 
 fn process_linux_dmabuf_feedback(
     rmsgs: Vec<Vec<u8>>,
     mut rfds: Vec<OwnedFd>,
@@ -2144,23 +2106,22 @@ fn process_linux_dmabuf_feedback(
     let mut current_tranche = Vec::new();
     for msg in rmsgs {
         let (obj, _len, opcode) = parse_wl_header(&msg);
-        /* Have only send events to this dmabuf_feedback */
+         
         assert!(obj == feedback);
         match MethodId::Event(opcode) {
             OPCODE_ZWP_LINUX_DMABUF_FEEDBACK_V1_MAIN_DEVICE => {
-                /* ignore, Waypipe may choose a different one */
+                 
             }
             OPCODE_ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_TARGET_DEVICE => {
-                /* ignore, Waypipe currently doesn't do anything interesting here */
+                 
             }
             OPCODE_ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS => {
-                /* ignore, Waypipe currently doesn't do anything interesting here */
+                 
             }
             OPCODE_ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FORMATS => {
                 let format_list =
                     parse_evt_zwp_linux_dmabuf_feedback_v1_tranche_formats(&msg).unwrap();
-                /* The indices correspond to the last received format table, and should must be interpreted immediately
-                 * in case the format table is changed later on */
+                 
                 for c in format_list.chunks_exact(2) {
                     let idx = u16::from_le_bytes(c.try_into().unwrap());
                     let entry: (u32, u64) = *format_table
@@ -2204,9 +2165,7 @@ fn process_linux_dmabuf_feedback(
     mod_table
 }
 
-/** Helper function: send dmabuf_feedback events for the given `feedback` object, and
- * return the map of format-modifier combinations supported by the program-side Waypipe
- * instance. */
+ 
 #[cfg(feature = "dmabuf")]
 fn send_linux_dmabuf_feedback(
     ctx: &mut ProtocolTestContext,
@@ -2263,9 +2222,7 @@ fn send_linux_dmabuf_feedback(
     process_linux_dmabuf_feedback(rmsgs, rfds, &mut format_table, feedback)
 }
 
-/** Helper function: setup wl_compositor and zwp_linux_dmabuf_v1 globals and a surface,
- * and return the map of format-modifier combinations supported by the program-side Waypipe
- * instance. */
+ 
 #[cfg(feature = "dmabuf")]
 fn setup_linux_dmabuf(
     ctx: &mut ProtocolTestContext,
@@ -2296,7 +2253,7 @@ fn setup_linux_dmabuf(
     send_linux_dmabuf_feedback(ctx, vulk, feedback)
 }
 
-/** Test that `wl_buffer` objects backed by DMABUFs are properly replicated. */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_dmabuf(info: TestInfo, device: RenderDevice) -> TestResult {
     let Ok(vulk) = setup_vulkan(device.id) else {
@@ -2329,7 +2286,7 @@ fn proto_dmabuf(info: TestInfo, device: RenderDevice) -> TestResult {
         for (w, h, immed) in [(3, 4, true), (64, 64, true), (513, 511, false)] {
             let mut img_data = vec![0u8; w * h * bpp];
             let mut i: u16 = 0x1234;
-            /* Draw a square inside */
+             
             for y in (h / 3)..(2 * h) / 3 {
                 for x in (w / 3)..(2 * w) / 3 {
                     img_data[2 * (y * w + x)..2 * (y * w + x) + 2]
@@ -2424,7 +2381,7 @@ fn proto_dmabuf(info: TestInfo, device: RenderDevice) -> TestResult {
             let mir_data = copy_from_dmabuf(&img, &tmp).unwrap();
             assert!(img_data == mir_data);
 
-            /* Cleanup buffer and params objects, for reuse with next image */
+             
             ctx.prog_write_passthrough(build_msgs(|dst| {
                 write_req_zwp_linux_buffer_params_v1_destroy(dst, params);
                 write_req_wl_buffer_destroy(dst, if immed { buffer } else { sbuffer });
@@ -2440,8 +2397,7 @@ fn proto_dmabuf(info: TestInfo, device: RenderDevice) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that Waypipe can process dmabuf feedback _changes_ (including table changes
- * during the feedback events) properly */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_dmabuf_feedback_table(info: TestInfo, device: RenderDevice) -> TestResult {
     if setup_vulkan(device.id).is_err() {
@@ -2470,13 +2426,7 @@ fn proto_dmabuf_feedback_table(info: TestInfo, device: RenderDevice) -> TestResu
     run_protocol_test_with_drm_node(&info, &device, &|mut ctx: ProtocolTestContext| {
         let [display, registry, dmabuf, feedback, ..] = ID_SEQUENCE;
 
-        /* Note: Vulkan implementations are required to support TRANSFER_SRC_BIT |
-         * TRANSFER_DST_BIT for the following formats, so Waypipe should be able to
-         * process all their corresponding formats.
-         *
-         * R5G6B5_UNORM_PACK16, R8G8_UNORM, R8G8B8A8_UNORM, A2B10G10R10_UNORM
-         * R16G16B16A16_SFLOAT.
-         */
+         
 
         let formats: [u32; 4] = [
             wayland_to_drm(WlShmFormat::R8),
@@ -2502,7 +2452,7 @@ fn proto_dmabuf_feedback_table(info: TestInfo, device: RenderDevice) -> TestResu
             write_req_zwp_linux_dmabuf_v1_get_default_feedback(dst, dmabuf, feedback);
         }));
 
-        /* Round 1: Regular setup */
+         
         let r1_formats = [formats[0], formats[1]];
         let (r1_fd, r1_size) = make_simple_format_table(&r1_formats);
         let mut format_table = Vec::new();
@@ -2537,7 +2487,7 @@ fn proto_dmabuf_feedback_table(info: TestInfo, device: RenderDevice) -> TestResu
             assert!(map.contains_key(&f), "missing {:x}", f);
         }
 
-        /* Round 2: Repeat setup with slightly different tranches, keeping the same table */
+         
         let ret = ctx
             .comp_write(
                 &build_msgs(|dst| {
@@ -2580,17 +2530,7 @@ fn proto_dmabuf_feedback_table(info: TestInfo, device: RenderDevice) -> TestResu
             assert!(map.contains_key(&f), "missing {:x}", f);
         }
 
-        /* Round 3: Changing format table for each tranche, or more frequently.
-         * (Note: the protocol specification implies but does not explicitly state that
-         * there is at most one format table per feedback::done; in practice most
-         * implementations will work even if the table is changed more often.)
-         *
-         * Table 1; tranche 1
-         * Table 2: tranche 2
-         * Table 3: ignored
-         * Table 4: empty, ignored
-         * Table 5: tranches 3+4
-         */
+         
         let t1_formats = [formats[1]];
         let t2_formats = [unsupported_format, formats[0]];
         let t3_formats = [formats[0], formats[3], formats[3], formats[0]];
@@ -2668,8 +2608,7 @@ fn proto_dmabuf_feedback_table(info: TestInfo, device: RenderDevice) -> TestResu
     Ok(StatusOk::Pass)
 }
 
-/** Test that Waypipe correctly processes linux-dmabuf format and modifier
- * advertisements for linux-dmabuf version ≤ 3 */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_dmabuf_pre_v4(info: TestInfo, device: RenderDevice) -> TestResult {
     let Ok(vulk) = setup_vulkan(device.id) else {
@@ -2684,7 +2623,7 @@ fn proto_dmabuf_pre_v4(info: TestInfo, device: RenderDevice) -> TestResult {
         wayland_to_drm(WlShmFormat::Rgb565),
         wayland_to_drm(WlShmFormat::Argb8888),
         wayland_to_drm(WlShmFormat::Xrgb8888),
-        unsupported_format, /* unsupported */
+        unsupported_format,  
     ];
 
     let mut ext_mods = Vec::from(vulk.get_supported_modifiers(formats[2]));
@@ -2703,7 +2642,7 @@ fn proto_dmabuf_pre_v4(info: TestInfo, device: RenderDevice) -> TestResult {
     println!("Initial modifiers: {:?}", modifiers);
 
     run_protocol_test_with_drm_node(&info, &device, &|mut ctx: ProtocolTestContext| {
-        /* version 3 introduced zwp_linux_dmabuf_v1::modifier */
+         
         let [display, registry, dmabuf_v1, dmabuf_v3, ..] = ID_SEQUENCE;
 
         ctx.prog_write_passthrough(build_msgs(|dst| {
@@ -2793,8 +2732,7 @@ fn proto_dmabuf_pre_v4(info: TestInfo, device: RenderDevice) -> TestResult {
 
             if i < 3 {
                 let mod_list = recvd_mods_v3.get(f);
-                /* Modifiers returned depend on what Waypipe supports, which should at least
-                 * include the linear modifier */
+                 
                 assert!(mod_list.is_some() && mod_list.unwrap().contains(&supported_modifier));
             } else {
                 assert!(!recvd_mods_v3.contains_key(f));
@@ -2804,8 +2742,7 @@ fn proto_dmabuf_pre_v4(info: TestInfo, device: RenderDevice) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Helper function to return data for a test image split into four quadrants with
- * different colors */
+ 
 #[cfg(feature = "video")]
 fn fill_blocks_xrgb(w: usize, h: usize) -> Vec<u8> {
     let bpp = 4;
@@ -2822,8 +2759,7 @@ fn fill_blocks_xrgb(w: usize, h: usize) -> Vec<u8> {
     img_data
 }
 
-/** Fill a buffer with a pattern that does not have any major obvious patterns and
- * is unlikely to video-encode well */
+ 
 #[cfg(feature = "video")]
 fn fill_pseudorand_xrgb(w: usize, h: usize) -> Vec<u8> {
     let bpp = 4;
@@ -2839,7 +2775,7 @@ fn fill_pseudorand_xrgb(w: usize, h: usize) -> Vec<u8> {
     img_data
 }
 
-/** Helper function to create and share a DMABUF with a wl_buffer. */
+ 
 #[cfg(feature = "dmabuf")]
 fn create_dmabuf_and_copy(
     vulk: &Arc<VulkanDevice>,
@@ -2856,7 +2792,7 @@ fn create_dmabuf_and_copy(
     let (img, planes) =
         vulkan_create_dmabuf(vulk, w as u32, h as u32, fmt, modifier_list, false).unwrap();
 
-    /* Initialize the image with garbage data */
+     
     let tmp_img = Arc::new(vulkan_get_buffer(vulk, img.nominal_size(None), false).unwrap());
     copy_onto_dmabuf(&img, &tmp_img, initial_data).unwrap();
 
@@ -2911,8 +2847,7 @@ fn create_dmabuf_and_copy(
     Ok((img, mirror))
 }
 
-/** Helper function to test that video encoding works and approximately replicates test patterns;
- * the format and other video properties are specified in `opts`. */
+ 
 #[cfg(feature = "video")]
 fn test_dmavid_inner(
     vulk: &Arc<VulkanDevice>,
@@ -2946,10 +2881,10 @@ fn test_dmavid_inner(
                 println!("Skipping test, format {:#08x} not supported", fmt);
                 return;
             };
-            // todo: run these in parallel?
+             
 
-            // In older libavcodec versions, the small (width <= 32, height <= 16) test sizes
-            // failed with uniform (88) green channel. More recent versions enforce minimum sizes.
+             
+             
             for (i, (w, h)) in sizes.iter().copied().enumerate() {
                 println!("Testing image transfer for WxH: {}x{}", w, h);
 
@@ -2991,13 +2926,13 @@ fn test_dmavid_inner(
                         ib.abs_diff(mb) as u64 + ig.abs_diff(mg) as u64 + ir.abs_diff(mr) as u64;
                 }
                 let avg_diff = net_diff / ((w * h) as u64);
-                /* Allow up to +/- 32 error on flat regions, and +/- 255 on edges between colored blocks */
+                 
                 let mut threshold: u64 = 32 + (255 - 32) / (w as u64) + (255 - 32) / (h as u64);
                 if w == 1 && h == 1 {
                     threshold = 32;
                 }
                 if net_diff == 0 {
-                    /* Either lossless video, or no video encoding at all */
+                     
                     println!(
                         "Perfect replication of {}x{} image, likely not using video enc/decoding",
                         w, h
@@ -3011,7 +2946,7 @@ fn test_dmavid_inner(
                              threshold,
                     );
                     if avg_diff >= threshold {
-                        /* XRGB8888 bytes are ordered: B G R x */
+                         
                         for (i, channel) in ["Blue", "Green", "Red"].iter().enumerate() {
                             println!("{} channel, original / replicated", channel);
                             for y in 0..h {
@@ -3035,10 +2970,10 @@ fn test_dmavid_inner(
                 if avg_diff > threshold {
                     accurate_replication[i].store(false, std::sync::atomic::Ordering::SeqCst);
                 }
-                // TODO: once video library bugs are resolved, set this
-                // assert!(avg_diff < threshold);
+                 
+                 
 
-                /* Cleanup buffer and params objects, for reuse with next image */
+                 
                 ctx.prog_write_passthrough(build_msgs(|dst| {
                     write_req_zwp_linux_buffer_params_v1_destroy(dst, params);
                     write_req_wl_buffer_destroy(dst, buffer);
@@ -3057,7 +2992,7 @@ fn test_dmavid_inner(
         .collect()
 }
 
-/** Test that video encoding works and approximately replicates test patterns. */
+ 
 #[cfg(feature = "video")]
 fn proto_dmavid(
     info: TestInfo,
@@ -3075,7 +3010,7 @@ fn proto_dmavid(
         compression: Compression::None,
         video: VideoSetting {
             format: Some(video_format),
-            bits_per_frame: None, // note: very high/low values can cause codec failure
+            bits_per_frame: None,  
             enc_pref: Some(if try_hw_enc {
                 CodecPreference::HW
             } else {
@@ -3121,9 +3056,9 @@ fn proto_dmavid(
             perfect = false;
         }
     }
-    // NOTE: as of writing, AMD hardware video decoding, and Intel hardware video
-    // encoding, of size w<=32, h<=16 (w=32,h=16) images does not accurately
-    // reproduce colors. Nor do x264 or vp9 software encoding/decoding for 1x1 images.
+     
+     
+     
     println!(
         "Overall result for video={:?}, try_hw_dec={}, try_hw_enc={}: expected accurate on small {}; was accurate {}; accurate on all {}",
         video_format,
@@ -3142,7 +3077,7 @@ fn proto_dmavid(
     }
 }
 
-/** Test that very long messages are either cleanly accepted or cleanly rejected. */
+ 
 fn proto_oversized(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let (display, registry) = (ObjId(1), ObjId(2));
@@ -3163,17 +3098,14 @@ fn proto_oversized(info: TestInfo) -> TestResult {
             length_evt_wl_registry_global(0)
         );
 
-        /* Waypipe should either reject or pass the message, but not hang or crash */
+         
         let res = ctx.comp_write(&msg, &[]);
         assert!(res.is_err() || res.is_ok_and(|x| x.0.concat() == msg));
     })?;
     Ok(StatusOk::Pass)
 }
 
-/** Damage a buffer and return rectangles containing the damage.
- *
- * Individual sub-patterns are labeled by the high 4 bits of each byte, with the low 4 bits used
- * to make data harder to replicate by accident. */
+ 
 fn get_diff_damage(
     iter: usize,
     base: &mut [u8],
@@ -3188,7 +3120,7 @@ fn get_diff_damage(
     const CYCLE: u8 = 11;
     match iter {
         0 => {
-            /* Test: large disjoint blocks, left side */
+             
             for y in 0..h / 4 {
                 for x in 0..w / 4 {
                     base[(y * stride + bpp * x)..(y * stride + bpp * x + bpp)].fill(0x10 + ctr);
@@ -3207,7 +3139,7 @@ fn get_diff_damage(
             ]
         }
         1 => {
-            /* Test: sparse differences in middle */
+             
             for y in (3 * h) / 8..(5 * h) / 8 {
                 let x = y.clamp(w / 8, (7 * w) / 8);
                 base[y * stride + bpp * x + bpp / 2] = 0x30 + ctr;
@@ -3216,7 +3148,7 @@ fn get_diff_damage(
             vec![(0, (3 * ih) / 8, iw, (5 * ih) / 8 - (3 * ih) / 8)]
         }
         2 => {
-            /* Test: large disjoint blocks, right side */
+             
             for y in 0..h / 4 {
                 for x in (w / 8)..w {
                     base[(y * stride + bpp * x)..(y * stride + bpp * x + bpp)].fill(0x40 + ctr);
@@ -3238,7 +3170,7 @@ fn get_diff_damage(
     }
 }
 
-/** Test to check that damaged regions of shm-type `wl_buffer`s are replicated. */
+ 
 fn proto_shm_damage(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let (display, registry, shm, comp, surface, pool, buffer) = (
@@ -3266,7 +3198,7 @@ fn proto_shm_damage(info: TestInfo) -> TestResult {
             write_req_wl_compositor_create_surface(dst, comp, surface);
         }));
 
-        /* For wl_shm buffer replication, the format is not very important as it only affects damage calculations */
+         
         let (w, h) = (257, 257);
         for format in [WlShmFormat::Rgb565, WlShmFormat::Argb8888] {
             let bpp = match format {
@@ -3338,11 +3270,7 @@ fn proto_shm_damage(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to check that damage calculations do not severely overestimate the damaged region;
- * in particular, that even the entire buffer contents are changed, but only a small region
- * is damaged, Waypipe will act as if the stated damage is correct and only update a small
- * region.
- */
+ 
 fn proto_damage_efficiency(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let [display, registry, shm, comp, surface, pool, buffer, ..] = ID_SEQUENCE;
@@ -3384,7 +3312,7 @@ fn proto_damage_efficiency(info: TestInfo) -> TestResult {
             );
             write_req_wl_shm_pool_destroy(dst, pool);
             write_req_wl_surface_attach(dst, surface, buffer, 0, 0);
-            /* The initial attachment effectively damages everything */
+             
             write_req_wl_surface_damage_buffer(dst, surface, 0, 0, i32::MAX, i32::MAX);
             write_req_wl_surface_commit(dst, surface);
         });
@@ -3400,7 +3328,7 @@ fn proto_damage_efficiency(info: TestInfo) -> TestResult {
         }
         update_file_contents(&buffer_fd, &base).unwrap();
         ctx.prog_write_passthrough(build_msgs(|dst| {
-            /* Update just the opposite corners. */
+             
             write_req_wl_surface_damage_buffer(dst, surface, 0, 0, 1, 1);
             write_req_wl_surface_damage_buffer(dst, surface, w as i32 - 1, h as i32 - 1, 1, 1);
             write_req_wl_surface_commit(dst, surface);
@@ -3424,7 +3352,7 @@ fn proto_damage_efficiency(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to check that damaged regions of DMABUF-type `wl_buffer`s are replicated. */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_dmabuf_damage(info: TestInfo, device: RenderDevice) -> TestResult {
     let Ok(vulk) = setup_vulkan(device.id) else {
@@ -3447,7 +3375,7 @@ fn proto_dmabuf_damage(info: TestInfo, device: RenderDevice) -> TestResult {
             &mut ctx, &vulk, display, registry, dmabuf, comp, surface, feedback,
         );
 
-        /* For dmabuf replication, the format (well, texel size) affects diff alignment */
+         
         for (w, h) in [(64_usize, 64_usize), (257_usize, 257_usize)] {
             for wl_format in [
                 WlShmFormat::R8,
@@ -3563,8 +3491,7 @@ fn proto_dmabuf_damage(info: TestInfo, device: RenderDevice) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test to verify the damage is correctly calculated (or at least, overestimated)
- * when using wp_viewport together with wl_surface.damage */
+ 
 fn proto_viewporter_damage(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let [display, registry, shm, comp, viewporter, surface, pool, buffer, viewport, ..] =
@@ -3616,17 +3543,16 @@ fn proto_viewporter_damage(info: TestInfo) -> TestResult {
         assert!(rfd.len() == 1);
         let output_fd = rfd.remove(0);
 
-        /* First, ensure replicated buffer matches */
+         
         ctx.prog_write_passthrough(build_msgs(|dst| {
             write_req_wl_surface_damage(dst, surface, 0, 0, i32::MAX, i32::MAX);
             write_req_wl_surface_commit(dst, surface);
         }));
         assert!(get_file_contents(&output_fd, file_sz).unwrap() == base);
 
-        /* Scale-only test */
+         
         ctx.prog_write_passthrough(build_msgs(|dst| {
-            /* Set viewport parameters (which effectively invalidates buffer contents,
-             * making Waypipe replicate the entire visible buffer contents */
+             
             write_req_wp_viewport_set_destination(dst, viewport, 200, 200);
             write_req_wl_surface_damage(dst, surface, 0, 0, i32::MAX, i32::MAX);
             write_req_wl_surface_commit(dst, surface);
@@ -3639,14 +3565,13 @@ fn proto_viewporter_damage(info: TestInfo) -> TestResult {
         }
         update_file_contents(&buffer_fd, &base).unwrap();
         ctx.prog_write_passthrough(build_msgs(|dst| {
-            /* Now that viewport parameters are set, _this_ damage should be efficiently
-             * tracked */
+             
             write_req_wl_surface_damage(dst, surface, 196, 196, 4, 4);
             write_req_wl_surface_commit(dst, surface);
         }));
         assert!(get_file_contents(&output_fd, file_sz).unwrap() == base);
 
-        /* Crop-only test */
+         
         ctx.prog_write_passthrough(build_msgs(|dst| {
             write_req_wp_viewport_set_destination(dst, viewport, -1, -1);
             write_req_wp_viewport_set_source(
@@ -3673,7 +3598,7 @@ fn proto_viewporter_damage(info: TestInfo) -> TestResult {
         }));
         assert!(get_file_contents(&output_fd, file_sz).unwrap() == base);
 
-        /* Combination scale and crop test */
+         
         ctx.prog_write_passthrough(build_msgs(|dst| {
             write_req_wp_viewport_set_source(
                 dst,
@@ -3700,7 +3625,7 @@ fn proto_viewporter_damage(info: TestInfo) -> TestResult {
         }));
         assert!(get_file_contents(&output_fd, file_sz).unwrap() == base);
 
-        /* Test destroying the viewport */
+         
         ctx.prog_write_passthrough(build_msgs(|dst| {
             write_req_wp_viewport_destroy(dst, viewport);
             write_req_wl_surface_damage(dst, surface, 0, 0, i32::MAX, i32::MAX);
@@ -3726,10 +3651,7 @@ fn proto_viewporter_damage(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that the entire buffer is updated when a transform change implies buffer content
- * changes. Flipping the way the buffer is linked to the surface may require changing its
- * contents when there is no damage -- because damage is defined as the change to _surface_
- * contents, not that to buffer contents */
+ 
 fn proto_flip_damage(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let [display, registry, shm, comp, surface, pool, buffer, ..] = ID_SEQUENCE;
@@ -3771,8 +3693,7 @@ fn proto_flip_damage(info: TestInfo) -> TestResult {
         let remote_fd = rfd.remove(0);
         assert!(get_file_contents(&remote_fd, (w * h) as usize).unwrap() == local_data);
 
-        /* Flip the buffer and its transform horizontally, but do not report any damage,
-         * since the pending buffer still agrees with the surface contents. */
+         
         local_data.fill(0xff);
         for x in 0..w / 2 {
             for y in 0..h {
@@ -3799,14 +3720,7 @@ fn proto_flip_damage(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that damage tracking is done _correctly_ when the surface transform and scale change.
- *
- * Design: with pseudorandomly transformed and scaled underlying buffers, render a scene in
- * which a sequence of pixels (in surface coordinates) are drawn, using precise damage
- * tracking to indicate in either surface or buffer coordinates what has changed. If Waypipe
- * correctly and efficiently tracks damage, it should always successfully replicate the
- * buffers.
- */
+ 
 fn proto_rotating_damage(info: TestInfo) -> TestResult {
     let transforms = [
         WlOutputTransform::Normal,
@@ -3819,16 +3733,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
         WlOutputTransform::Flipped270,
     ];
 
-    /** Transform pixel from buffer coordinates to surface coordinates,
-     * assuming scale 1.
-     *
-     * `buf_sz` is the size of the buffer.
-     *
-     * `transform` is the transform passed to `wl_surface::set_buffer_transform`, which
-     * is the "transformation the client has already applied to the content of the buffer".
-     * As a result, when moving from buffer to surface, one needs to do the _inverse_ of the
-     * operation that the transform says to do.
-     */
+     
     fn buf_to_surface_tx(
         transform: WlOutputTransform,
         mut px: (i32, i32),
@@ -3852,10 +3757,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
             WlOutputTransform::Flipped90 | WlOutputTransform::Flipped270 => (s.1 - 1 - px.0, px.1),
         }
     }
-    /** Like buf_to_surface_tx; here the transform operation is applied to the input pixel
-     * within a surface.
-     *
-     * `buf_sz` is the size of the _buffer_, not the surface. */
+     
     fn surface_to_buf_tx(
         transform: WlOutputTransform,
         mut px: (i32, i32),
@@ -3876,14 +3778,13 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
         } else {
             (buf_sz.0.try_into().unwrap(), buf_sz.1.try_into().unwrap())
         };
-        /* flip over vertical axis happens before rotation */
+         
         px = match transform {
             WlOutputTransform::Normal
             | WlOutputTransform::Item90
             | WlOutputTransform::Item180
             | WlOutputTransform::Item270 => px,
-            /* Subtract 1 when flipping since pixels are actually [(x,x+1,y,y+1)]
-             * rectangles whose bounds swap on subtraction. */
+             
             WlOutputTransform::Flipped
             | WlOutputTransform::Flipped90
             | WlOutputTransform::Flipped180
@@ -3891,16 +3792,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
         };
         match transform {
             WlOutputTransform::Normal | WlOutputTransform::Flipped => (px.0, px.1),
-            /* contents rotated 90 deg ccw around the top left corner (0,0)
-             *
-             *   surface     buffer
-             * 0--------X    0---X
-             * |        |    |  *|
-             * |      * | -> |   |
-             * X--------X    |   |
-             *               |   |
-             *               X---X
-             */
+             
             WlOutputTransform::Item90 | WlOutputTransform::Flipped90 => {
                 (px.1, surf_sz.0 - 1 - px.0)
             }
@@ -3913,7 +3805,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
         }
     }
 
-    /* Sanity check, that transforms work correctly */
+     
     for t in transforms {
         let p = (1, 2);
         let q = buf_to_surface_tx(t, p, (100, 200));
@@ -3966,13 +3858,13 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
 
         let fmt = WlShmFormat::Rgb565;
         let bpp = 2;
-        let pixel_s = 20; /* surface square size for pixel selection */
-        let s = 2 * pixel_s + 30; /* So that all pixels fall inside a scale 2 surface */
+        let pixel_s = 20;  
+        let s = 2 * pixel_s + 30;  
         assert!(s * bpp >= 64);
-        /* A randomly shuffled sequence which uses every transform+scale combination at least once */
+         
         let buffer_sequence: &[(usize, u32, u32, u32)] = &[
-            /* transform idx, scale, width, height */
-            (0, 1, s, s), /* seed, default setup */
+             
+            (0, 1, s, s),  
             (5, 2, s, s),
             (5, 1, s + 2, s - 2),
             (3, 2, s + 4, s - 4),
@@ -3998,7 +3890,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
             offsets.push(file_sz as u32);
         }
 
-        /* Setup: zero initialize three wl_buffers */
+         
         let mut local_data = vec![0x01; file_sz];
         ctx.prog_write_passthrough(build_msgs(|dst| {
             write_req_wl_display_get_registry(dst, display, registry);
@@ -4034,7 +3926,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
         assert!(rfd.len() == 1);
         let remote_fd = rfd.remove(0);
         let remote_data = get_file_contents(&remote_fd, file_sz).unwrap();
-        /* Check that the seed buffer was correctly replicated; others have not yet been used and may have arbitrary contents */
+         
         assert!(
             remote_data[offsets[0] as usize..offsets[1] as usize]
                 == local_data[offsets[0] as usize..offsets[1] as usize]
@@ -4049,7 +3941,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
             );
             px_seq.push(px);
 
-            /* Sequence; 0 121 232 343 ... 15.16.15 + 16 */
+             
             let buf_no = if step == 0 {
                 0
             } else {
@@ -4067,13 +3959,12 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
                 step, buf_no, scale, transform, buf_size, px
             );
 
-            /* extract sub-buffer contents ? but note the stride difference, and that the pixel may miss */
+             
             let local_region =
                 &mut local_data[offsets[buf_no] as usize..offsets[buf_no + 1] as usize];
 
             for (step, p) in px_seq[..px_seq.len() - 1].iter().enumerate() {
-                /* draw entire past pixel sequence; since each buffer only ever uses the same
-                 * scale/transform parameters the data will be consistent between commits. */
+                 
                 draw_pixel(
                     local_region,
                     buf_size,
@@ -4093,8 +3984,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
                 transform,
                 (step + 100) as u16,
             );
-            /* If pixel is not drawn this round, its damage can be ignored and Waypipe should
-             * not be expected to synchronize the not-actually-"damaged" spot for later commits. */
+             
             assert!(!mod_pixels.is_empty());
 
             let cfg = build_msgs(|dst| {
@@ -4111,7 +4001,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
 
             update_file_contents(&local_fd, &local_data).unwrap();
             if on_surface {
-                /* plain wl_surface::damage; just mark old and new pixel positions */
+                 
                 ctx.prog_write_passthrough(
                     [
                         cfg,
@@ -4123,8 +4013,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
                     .concat(),
                 );
             } else {
-                /* damage_buffer: compute difference between old and new images, and
-                 * report changed pixels from those */
+                 
                 ctx.prog_write_passthrough(
                     [
                         cfg,
@@ -4152,7 +4041,7 @@ fn proto_rotating_damage(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that timeline semaphores for the linux-drm-syncobj-v1 protocol are correctly handled. */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_explicit_sync(info: TestInfo, device: RenderDevice) -> TestResult {
     if matches!(device.device_type, RenderDeviceType::Gbm) {
@@ -4253,7 +4142,7 @@ fn proto_explicit_sync(info: TestInfo, device: RenderDevice) -> TestResult {
         let tmp_rd = Arc::new(vulkan_get_buffer(&vulk, img.nominal_size(None), true).unwrap());
 
         for iter in 0..4 {
-            /* Change entire image, except on the second iteration */
+             
             if iter != 1 {
                 base.fill(iter);
             }
@@ -4262,7 +4151,7 @@ fn proto_explicit_sync(info: TestInfo, device: RenderDevice) -> TestResult {
             let rel_pt = acq_pt + 2;
 
             if iter == 2 {
-                /* Special case: signal before writing */
+                 
                 println!("Signalling acquire {}", acq_pt);
                 prog_timeline.signal_timeline_pt(acq_pt).unwrap();
             }
@@ -4282,15 +4171,13 @@ fn proto_explicit_sync(info: TestInfo, device: RenderDevice) -> TestResult {
 
             test_write_msgs(&ctx.sock_prog, &msg, &[]);
 
-            /* Signal after writing; this is safe because the messages sent will at minimum
-             * fit in the pipe buffer */
+             
             if iter != 2 {
                 println!("Signalling acquire {}", acq_pt);
                 prog_timeline.signal_timeline_pt(acq_pt).unwrap();
             }
 
-            /* Only start reading messages after signalling; this prevents a possible deadlock,
-             * because the code might wait for the signal before sending messages further */
+             
             let (rmsg, rfds, err) = test_read_msgs(&ctx.sock_comp, Some(&ctx.sock_prog));
             assert!(err.is_none());
             assert!(rfds.is_empty());
@@ -4330,12 +4217,10 @@ fn proto_explicit_sync(info: TestInfo, device: RenderDevice) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that Waypipe can successfully process a large number of FDS */
+ 
 fn proto_many_fds(info: TestInfo) -> TestResult {
     let mut files: Vec<(Vec<u8>, OwnedFd)> = Vec::new();
-    /* 100 is the > the 28 max fds sent in a batch by libwayland, but also
-     * not that large that having four copies of each would break a standard
-     * 1024-fd ulimit. */
+     
     for i in 0..100 {
         let x: Vec<u8> = format!("{}", i).into();
         let fd = make_file_with_contents(&x).unwrap();
@@ -4343,7 +4228,7 @@ fn proto_many_fds(info: TestInfo) -> TestResult {
     }
 
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
-        /* Setup a wl_keyboard */
+         
         let (display, registry, seat, keyboard) = (ObjId(1), ObjId(2), ObjId(3), ObjId(4));
         ctx.prog_write_passthrough(build_msgs(|dst| {
             write_req_wl_display_get_registry(dst, display, registry);
@@ -4361,7 +4246,7 @@ fn proto_many_fds(info: TestInfo) -> TestResult {
             write_req_wl_seat_get_keyboard(dst, seat, keyboard);
         }));
 
-        /* Send all the files, in order */
+         
         let fds: Vec<&OwnedFd> = files.iter().map(|(_c, f)| f).collect();
 
         let m = &build_msgs(|dst| {
@@ -4384,9 +4269,9 @@ fn proto_many_fds(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Test that Waypipe either cleanly processes or errors when applying a title prefix. */
+ 
 fn proto_title_prefix(info: TestInfo) -> TestResult {
-    // /* test lengths are: empty, short, too long for small buffers, cannot fit in a Wayland message */
+     
     for (prefix_len, fail) in [(0, false), (100, false), (10000, true), (100000, true)] {
         let prefix = String::from("a").repeat(prefix_len);
         let options = WaypipeOptions {
@@ -4441,7 +4326,7 @@ fn proto_title_prefix(info: TestInfo) -> TestResult {
                             );
                             let title = parse_req_xdg_toplevel_set_title(msg).unwrap();
                             let orig_title = vec![b'b'; *title_len];
-                            /* The title prefix is added twice, once per main loop instance */
+                             
                             let mut ref_title = vec![b'a'; prefix_len * 2];
                             ref_title.extend_from_slice(&orig_title);
                             assert!(title == ref_title);
@@ -4454,15 +4339,14 @@ fn proto_title_prefix(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Protocol to use for a screencopy test */
+ 
 #[derive(Clone, Copy)]
 enum ScreencopyType {
     WlrScreencopy,
     ExtImageCopyCapture,
 }
 
-/** Send event(s) signaling completion of a screencopy frame, and check they are correctly
- * replicated */
+ 
 fn send_screencopy_ready(ctx: &mut ProtocolTestContext, frame: ObjId, style: ScreencopyType) {
     let time_ns: u32 = 123456789;
     let time_s: u32 = 1;
@@ -4520,16 +4404,14 @@ fn send_screencopy_ready(ctx: &mut ProtocolTestContext, frame: ObjId, style: Scr
     };
     let output_ns = 1000000000 * (join_u64(tv_sec_hi, tv_sec_lo) as u128) + (tv_nsec as u128);
 
-    /* The time adjustment uses two XYX measurements, whose absolute error
-     * is ≤ half the elapsed time each, assuming the clocks run at the same
-     * rate and do not change. */
+     
     let max_time_error = end.duration_since(start).saturating_mul(2);
 
     let abs_diff = output_ns.abs_diff(init_time_ns);
     assert!(abs_diff < max_time_error.as_nanos());
 }
 
-/** Test that basic screencopy operations work with wl_shm buffers */
+ 
 fn proto_screencopy_shm(info: TestInfo, style: ScreencopyType) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let [display, reg, shm, screencopy, output, shm_pool, buffer1, buffer2, ..] = ID_SEQUENCE;
@@ -4698,15 +4580,11 @@ fn proto_screencopy_shm(info: TestInfo, style: ScreencopyType) -> TestResult {
                 write_evt_ext_image_copy_capture_frame_v1_failed(dst, frame, 0)
             }
         }));
-        /* Check that the failed screencopy does not lead to replication
-         * (Although technically Waypipe _could_ eagerly make updates in this scenario,
-         * since the buffer contents were already updated, doing so would be inefficient;
-         * the wlr-screencopy protocol also says nothing about the buffer state on failure.)
-         */
+         
         let check1 = get_file_contents(&shm_fd, pool_sz).unwrap();
         assert!(check1 == seed_contents);
 
-        // Check diff
+         
         ctx.prog_write_passthrough(build_msgs(|dst| match style {
             ScreencopyType::WlrScreencopy => write_req_zwlr_screencopy_frame_v1_destroy(dst, frame),
             ScreencopyType::ExtImageCopyCapture => {
@@ -4778,23 +4656,23 @@ fn proto_screencopy_shm(info: TestInfo, style: ScreencopyType) -> TestResult {
 
         send_screencopy_ready(&mut ctx, frame, style);
 
-        /* Check that the update is replicated */
+         
         let check2 = get_file_contents(&shm_fd, pool_sz).unwrap();
         assert!(check2 == copy_contents);
     })?;
     Ok(StatusOk::Pass)
 }
 
-/** Test that basic wlr-screencopy operations work with wl_shm buffers */
+ 
 fn proto_screencopy_shm_wlr(info: TestInfo) -> TestResult {
     proto_screencopy_shm(info, ScreencopyType::WlrScreencopy)
 }
-/** Test that basic ext-image-copy-capture operations work with wl_shm buffers */
+ 
 fn proto_screencopy_shm_ext(info: TestInfo) -> TestResult {
     proto_screencopy_shm(info, ScreencopyType::ExtImageCopyCapture)
 }
 
-/** Test that basic wlr_screencopy operations work with dmabufs */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_screencopy_dmabuf(
     info: TestInfo,
@@ -4963,7 +4841,7 @@ fn proto_screencopy_dmabuf(
         received_mod_table[0].1.sort();
         let mut mod_copy = mod_list.clone();
         mod_copy.sort();
-        /* All modifiers should make the roundtrip, since they were already filtered by linux-dmabuf */
+         
         assert!(received_mod_table[0].1 == mod_copy);
 
         let img_size = (w * h) as usize * bpp;
@@ -5016,19 +4894,18 @@ fn proto_screencopy_dmabuf(
     Ok(StatusOk::Pass)
 }
 
-/** Test that basic wlr-screencopy operations work with dmabufs */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_screencopy_dmabuf_wlr(info: TestInfo, device: RenderDevice) -> TestResult {
     proto_screencopy_dmabuf(info, device, ScreencopyType::WlrScreencopy)
 }
-/** Test that basic ext-image-copy-capture operations work with dmabufs */
+ 
 #[cfg(feature = "dmabuf")]
 fn proto_screencopy_dmabuf_ext(info: TestInfo, device: RenderDevice) -> TestResult {
     proto_screencopy_dmabuf(info, device, ScreencopyType::ExtImageCopyCapture)
 }
 
-/** Register an array of video tests for various video format and hardware/software
- * encoding/decoding parameters */
+ 
 #[cfg(feature = "video")]
 fn register_video_tests<'a>(
     tests: &mut Vec<(String, Box<dyn Fn(TestInfo) -> TestResult + 'a>)>,
@@ -5069,7 +4946,7 @@ fn register_video_tests<'a>(
                     let dev = RenderDevice {
                         name: &s.0,
                         id: s.1,
-                        /* Video encoding/decoding only works with Vulkan right now */
+                         
                         device_type: RenderDeviceType::Vulkan,
                     };
                     proto_dmavid(
@@ -5086,7 +4963,7 @@ fn register_video_tests<'a>(
     }
 }
 
-/** Test that Waypipe correctly updates buffers when xdg_toplevel_icon_v1::add_buffer is used */
+ 
 fn proto_toplevel_icon(info: TestInfo) -> TestResult {
     run_protocol_test(&info, &|mut ctx: ProtocolTestContext| {
         let [display, registry, shm, ico_mgr, pool, icon, buffer1, buffer2, buffer3, ..] =
@@ -5141,7 +5018,7 @@ fn proto_toplevel_icon(info: TestInfo) -> TestResult {
             write_evt_xdg_toplevel_icon_manager_v1_done(dst, ico_mgr);
         }));
 
-        // Fill icon buffer contents
+         
         for (size, offset) in sizes.iter().zip(offsets.iter()) {
             for (z, c) in data[(*offset as usize)..(*offset + size * size * 4) as usize]
                 .chunks_exact_mut(4)
@@ -5158,7 +5035,7 @@ fn proto_toplevel_icon(info: TestInfo) -> TestResult {
             }
         }));
 
-        // Verify buffers were replicated
+         
         let rcontents = get_file_contents(&output_fd, data.len()).unwrap();
 
         for (size, offset) in sizes.iter().zip(offsets.iter()) {
@@ -5169,7 +5046,7 @@ fn proto_toplevel_icon(info: TestInfo) -> TestResult {
     Ok(StatusOk::Pass)
 }
 
-/** Main entry point. */
+ 
 fn main() -> ExitCode {
     let command = ClapCommand::new(env!("CARGO_BIN_NAME"))
         .help_expected(true)
@@ -5241,7 +5118,7 @@ fn main() -> ExitCode {
 
     let vk_device_ids = list_vulkan_device_ids();
 
-    /* Construct a list of all tests */
+     
     let mut tests: Vec<(String, Box<dyn Fn(TestInfo) -> TestResult>)> = Vec::new();
     let t = &mut tests;
 
@@ -5327,7 +5204,7 @@ fn main() -> ExitCode {
         signal::SigSet::empty(),
     );
     unsafe {
-        // SAFETY: signal handler installed is trivial and replaces nothing
+         
         signal::sigaction(signal::Signal::SIGCHLD, &sigaction)
             .map_err(|x| tag!("Failed to set sigaction: {}", x))
             .unwrap();
@@ -5338,7 +5215,7 @@ fn main() -> ExitCode {
     for (name, func) in &tests {
         let mut stdout = std::io::stdout().lock();
         write!(&mut stdout, "{} ...", name).unwrap();
-        /* flush immediately so that buffer is empty before fork and will not be written twice */
+         
         stdout.flush().unwrap();
         drop(stdout);
 
@@ -5357,15 +5234,12 @@ fn main() -> ExitCode {
         .unwrap();
 
         let res = match unsafe {
-            /* SAFETY: this program is not multi-threaded at this point.
-             * (No vulkan setup or initialization has been done.) */
+             
             unistd::fork().unwrap()
         } {
             unistd::ForkResult::Child => {
-                /* Blocking wait for child to complete */
-                /* Atomically replace STDOUT, STDERR, STDIN; this may break library code which
-                 * incorrectly assumes standard io file descriptors never change properties
-                 * (e.g., by caching isatty()). */
+                 
+                 
                 unistd::dup2_stdout(&new_stdouterr).unwrap();
                 unistd::dup2_stderr(&new_stdouterr).unwrap();
                 unistd::dup2_stdin(&new_stdin).unwrap();
@@ -5373,24 +5247,21 @@ fn main() -> ExitCode {
                 drop(read_out);
 
                 if !core {
-                    /* Disable core dumps for child process, because the tests report errors
-                     * using using panic! or a failed assert!, and core dumps should not need
-                     * recording. This _also_ prevents the Waypipe instances from making a
-                     * core dump. */
+                     
                     assert!(
                         unsafe {
                             let x = libc::rlimit {
                                 rlim_cur: 0,
                                 rlim_max: 0,
                             };
-                            /* SAFETY: x is properly aligned, is not captured by setrlimit, and lives until end of scope */
+                             
                             libc::setrlimit(libc::RLIMIT_CORE, &x)
                         } != -1
                     );
                 }
 
-                // TODO: process group configuration to kill the child process and
-                // everything it spawns on timeout events?
+                 
+                 
 
                 let ret = func(info);
                 return match ret {
@@ -5412,7 +5283,7 @@ fn main() -> ExitCode {
 
                 set_nonblock(&read_out).unwrap();
 
-                /* Wait for the child to complete, and capture its output */
+                 
                 let mut log = Vec::new();
                 let mut tmp = vec![0u8; 1 << 18];
                 let child_status: WaitStatus;
@@ -5437,8 +5308,7 @@ fn main() -> ExitCode {
                     if rev.contains(poll::PollFlags::POLLERR)
                         || rev.contains(poll::PollFlags::POLLHUP)
                     {
-                        /* Child closed connection (or more likely, died).
-                         * Data remaining in pipe will be read. */
+                         
                         child_status = wait::waitpid(child, None).unwrap();
                         break;
                     }
@@ -5466,8 +5336,7 @@ fn main() -> ExitCode {
                     }
                 }
 
-                /* Read all remaining data in the pipe, dropping anything
-                 * that was read after receipt of the information of test process death */
+                 
                 loop {
                     match unistd::read(&read_out, &mut tmp) {
                         Ok(n) => {
@@ -5508,8 +5377,7 @@ fn main() -> ExitCode {
                                 pid, signal, dump
                             );
                         }
-                        /* The test process aborting signals either the Waypipe instance
-                         * failing (making the test panic) or a major bug in the test. */
+                         
                         TestCategory::Fail
                     }
                     _ => {
@@ -5538,7 +5406,7 @@ fn main() -> ExitCode {
     if nfail > 0 {
         ExitCode::FAILURE
     } else if nskip == tests.len() {
-        /* This can happen in regular use, when there are no usable render devices */
+         
         ExitCode::from(EXITCODE_SKIPPED)
     } else {
         ExitCode::SUCCESS

@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Security context setup communication with the Wayland compositor */
+ 
+ 
 use crate::tag;
 use crate::util::*;
 use crate::wayland::*;
@@ -22,11 +22,7 @@ fn read_event(connection: &OwnedFd) -> Result<Vec<u8>, String> {
     Ok(msg)
 }
 
-/**
- * Set up a security context.
- *
- * `connection` is a blocking socket connecting to the compositor.
- */
+ 
 pub fn provide_secctx(
     connection: OwnedFd,
     app_id: &str,
@@ -52,13 +48,13 @@ pub fn provide_secctx(
         let (object_id, _length, opcode) = parse_wl_header(&msg);
 
         if object_id == callback {
-            /* wl_callback; only event is 'done' */
+             
             return Err(tag!(
                 "Compositor did not provide wp_security_context_manager_v1 global"
             ));
         } else if object_id == registry {
             if opcode != OPCODE_WL_REGISTRY_GLOBAL.code() {
-                // global remove should not happen in first roundtrip for reasonable compositors
+                 
                 debug!("Unexpected event from registry {}: {}", object_id, opcode);
                 continue;
             }
@@ -86,7 +82,7 @@ pub fn provide_secctx(
     );
     write_req_wp_security_context_manager_v1_create_listener(&mut dst, manager, false, context);
     write_req_wp_security_context_v1_set_app_id(&mut dst, context, app_id.as_bytes());
-    /* Set the instance id to indicate the root process */
+     
     let pid = std::process::id();
     let mut pid_str = [0u8; 10];
     let mut pid_cursor = Cursor::new(&mut pid_str[..]);
@@ -130,10 +126,7 @@ pub fn provide_secctx(
     drop(close_fd);
     drop(listen_fd);
 
-    /* Wait for callback2 to return. Technically this should not be necessary, since
-     * in the event of failure later connections will break; but even libwayland 1.23
-     * has the misbehavior of dropping trailing messages when the connection closes,
-     * so a roundtrip is necessary to verify arrival. */
+     
     loop {
         let msg = read_event(&connection)?;
         let (object_id, _length, opcode) = parse_wl_header(&msg);
@@ -160,14 +153,14 @@ pub fn provide_secctx(
                 debug!("Unexpected event from object {}: {}", object_id, opcode);
             }
         } else if object_id == registry || object_id == callback {
-            // ignore
+             
             continue;
         } else {
             debug!("Unexpected event from object {}: {}", object_id, opcode);
         }
     }
 
-    /* Connection is safe to drop: compositor will keep listening until close_fd is hung up on */
+     
     drop(connection);
 
     Ok(())

@@ -1,11 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Damage merging logic */
+ 
+ 
 use log::debug;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-/* Note: (the use of u32 x1/x2 instead of i32 x+width ensures sign and overflow checks need
- * be done only once.) */
+ 
 #[derive(Debug, Copy, Clone)]
 pub struct Rect {
     pub x1: u32,
@@ -14,7 +13,7 @@ pub struct Rect {
     pub y2: u32,
 }
 
-/* Note: this _saturates_ on overflow, and assumes a well-formed rectangle with x1<x2,y1<y2 */
+ 
 fn bounding_interval(r: &Rect, offset: usize, stride: usize, bpp: usize) -> (usize, usize) {
     let start = offset
         .saturating_add((r.y1 as usize).saturating_mul(stride))
@@ -33,7 +32,7 @@ fn align_down(x: usize, align_bits: u32) -> usize {
 fn align_up(x: usize, align_bits: u32) -> usize {
     x.checked_next_multiple_of(1_usize << align_bits).unwrap()
 }
-// todo: handling overflow? Cannot align max_int - 1; better to error?
+ 
 
 fn aligned_bounding_interval(
     r: &Rect,
@@ -46,7 +45,7 @@ fn aligned_bounding_interval(
     (align_down(x.0, align_bits), align_up(x.1, align_bits))
 }
 
-/* Requires: All rectangles, after projection, will fit inside the interval given by bound */
+ 
 fn process_group(
     rects: &[Rect],
     bound: (usize, usize),
@@ -57,28 +56,28 @@ fn process_group(
     stride: usize,
     bpp: usize,
 ) {
-    // TODO: implement a pre-pass that computes a disjoint collection of rectangles (e.g.: using a sweep
-    // line algorithm plus interval tree); this would be far more efficient than the current solution, which
-    // tends to compute almost the same union once per horizontal line. The fact that the output space is
-    // almost a cylinder is not actually important -- it at most introduces one seam per horizontal line,
-    // which is a minor cost. min_gap can be handled by horizontally expanding the rectangles beforehand;
-    // it is permissible to erase gaps slightly larger than min_gap.
+     
+     
+     
+     
+     
+     
 
-    /* A heap of indices into the rectangle, using lex sorted key to track start position and rect index  */
+     
     let mut rect_heap: BinaryHeap<(Reverse<usize>, usize)> = BinaryHeap::new();
     rect_heap.reserve_exact(rects.len());
     let mut row_counters: Vec<usize> = vec![0; rects.len()];
 
-    let mut work_estimate: usize = 0; // if this grows too large relative to bound.1-bound.0, fall back to dumb strategy.
+    let mut work_estimate: usize = 0;  
 
     for (i, r) in rects.iter().enumerate() {
         if (r.x2 - r.x1) as usize * bpp > stride.saturating_sub(min_gap) {
-            /* All segments from this rectangle will be merged; this is a common case, so optimize it */
+             
             row_counters[i] = usize::MAX;
         }
 
-        // TODO: special case optimization to merge entire rectangle into contiguous segment if gaps are small;
-        // not _strictly_ necessary, but good for perf
+         
+         
         let start_pos = align_down(
             offset + (r.y1 as usize) * stride + (r.x1 as usize) * bpp,
             align_bits,
@@ -88,7 +87,7 @@ fn process_group(
 
     let mut cur: Option<(usize, usize)> = None;
     while let Some((Reverse(start), i)) = rect_heap.pop() {
-        /* Process next segment */
+         
         let rect = &rects[i];
         let merge_opt = row_counters[i] == usize::MAX;
         let end = if merge_opt {
@@ -104,7 +103,7 @@ fn process_group(
         };
         if let Some(cv) = cur {
             if start <= cv.1 || (start - cv.1) < min_gap {
-                /* either approximate containment or overlap */
+                 
                 cur = Some((cv.0, std::cmp::max(cv.1, end)));
             } else {
                 output.push(cv);
@@ -115,7 +114,7 @@ fn process_group(
         }
 
         if !merge_opt {
-            /* Update row counter and return rectangle if not done */
+             
             row_counters[i] += 1;
             if row_counters[i] < (rect.y2 - rect.y1) as usize {
                 let start_pos = align_down(
@@ -128,10 +127,7 @@ fn process_group(
             }
         }
 
-        /* Do not spend much more time computing damage regions than it would
-         * take to just scan the entire interval for differences. This doesn't
-         * need to be a _great_ estimate, just within a few orders of magnitude
-         * to avoid pathological behavior */
+         
         work_estimate += std::cmp::max(16, rect_heap.len()).ilog2() as usize;
         if work_estimate > (bound.1 - bound.0) / 8 {
             debug!(
@@ -149,16 +145,8 @@ fn process_group(
     }
 }
 
-// todo: eventually add support for multiplanar and subsampled formats?
-/**
- * Note: all rectangles must be clipped to the wl_buffer bounds, otherwise function may produce nonsense or panic
- *
- * min_gap: minimum allowed gap on output
- * align_bits: e.g. value 6 => output segment positions are multiples of 64
- *
- * The last interval may be rounded up align(buffer end, 1<<align_bits), and need not be
- * entirely contained by the buffer.
- */
+ 
+ 
 pub fn compute_damaged_segments(
     rects: &mut [Rect],
     align_bits: u32,
@@ -185,12 +173,11 @@ pub fn compute_damaged_segments(
     struct Group {
         i_start: usize,
         i_end: usize,
-        /* The aligned region covered by the corresponding rectangles */
+         
         region: (usize, usize),
     }
 
-    /* First: group intervals into overlapping clumps separated by >= min_gap, post alignment.
-     * */
+     
     let mut spans: Vec<Group> = Vec::new();
     let mut rect_iter = rects.iter().enumerate();
     let mut current = Group {
@@ -223,7 +210,7 @@ pub fn compute_damaged_segments(
     }
     spans.push(current);
 
-    /* Next: process each span (or if it isn't worth the time, complete it) */
+     
     for group in spans {
         process_group(
             &rects[group.i_start..group.i_end],
@@ -240,10 +227,7 @@ pub fn compute_damaged_segments(
     output
 }
 
-/* Given two sorted lists of disjoint intervals, compute their union, automatically closing any
- * gaps of size <min_gap in the process. Panics if validation fails, as this should be an invariant.
- * This preserves endpoint alignment.
- */
+ 
 pub fn union_damage(
     a: &[(usize, usize)],
     b: &[(usize, usize)],
@@ -259,7 +243,7 @@ pub fn union_damage(
 
     let mut last: Option<(usize, usize)> = None;
     loop {
-        // Extract element with next earliest endpoint from either of A or B
+         
         let pa = iter_a.peek();
         let pb = iter_b.peek();
 
@@ -283,7 +267,7 @@ pub fn union_damage(
             continue;
         };
 
-        // Merge intervals or push old
+         
         if nxt.0 <= y.1 || (nxt.0 - y.1) < min_gap {
             y.1 = std::cmp::max(y.1, nxt.1);
             last = Some(y);
@@ -348,7 +332,7 @@ fn test_union_damage() {
     println!("output: {:?}", output);
     assert_eq!(&output, &[(0, 10), (14, 20)]);
 
-    // TODO: test overflow conditions
+     
 }
 
 #[test]
@@ -381,7 +365,7 @@ fn test_damage_computation() {
         assert!(slices.len() == 20);
         println!("slices: {:?}", slices);
 
-        /* Check that, when min_gap is huge, only one big interval is reported. */
+         
         let mut tmp = example_pattern;
         let min_gap = usize::MAX;
         let slices = compute_damaged_segments(&mut tmp, align_bits, min_gap, offset, stride, bpp);
@@ -415,7 +399,7 @@ fn test_damage_computation() {
     assert!(stride >= w * bpp);
     let mut mask = vec![false; h * stride];
     for i in 0..100_usize {
-        /* A variety of test patterns */
+         
         let mut rects: Vec<Rect> = Vec::new();
         if i == 0 {
             for x in 0..((w / 2) as u32) {

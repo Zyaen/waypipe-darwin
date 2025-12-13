@@ -6,8 +6,8 @@ fn depfile_to_cargo(path: &std::path::Path) {
     let mut depfile = std::fs::File::open(path).unwrap();
     let mut data = Vec::<u8>::new();
     depfile.read_to_end(&mut data).unwrap();
-    // depfile contains the dependencies, in Make-style. Spaces in paths are escaped with '\ ',
-    // and backslashes with '\\'. Other escaped chars (newlines, control characters) may break.
+     
+     
     let mut unescaped = Vec::new();
     let mut chunks: Vec<String> = Vec::new();
     assert!(!data.contains(&0));
@@ -17,7 +17,7 @@ fn depfile_to_cargo(path: &std::path::Path) {
             break;
         };
         if c == b'\\' {
-            // TODO: how does Cargo handle escapes in path names? Or invalid utf8?
+             
             let d = scan.next().unwrap();
             match d {
                 b' ' => unescaped.push(b' '),

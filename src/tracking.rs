@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Wayland protocol message handling and translation logic */
+ 
+ 
 use crate::damage::*;
 #[cfg(feature = "dmabuf")]
 use crate::dmabuf::*;
@@ -18,7 +18,7 @@ use crate::wayland_gen::*;
 use core::str;
 use log::{debug, error};
 use nix::libc;
-use nix::sys::memfd;
+use nix::sys::time;
 use nix::unistd;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -26,16 +26,15 @@ use std::fmt::{Display, Formatter};
 use std::os::fd::OwnedFd;
 use std::rc::Rc;
 
-/** Structure storing information for a specific Wayland object */
+ 
 pub struct WpObject {
-    /** Wayland interface associated with the object */
+     
     obj_type: WaylandInterface,
-    /** Extra data associated with the object; in practice this enum either matches
-     * WaylandInterface or is WpExtra::None */
+     
     extra: WpExtra,
 }
 
-/** Damage rectangle, of the form directly provided by wl_surface.damage and wl_surface.damage_buffer */
+ 
 #[derive(Clone, Copy, Debug)]
 struct WlRect {
     x: i32,
@@ -44,70 +43,59 @@ struct WlRect {
     height: i32,
 }
 
-/** Properties of a buffer's attachment to the surface, which are required to interpret how
- * surface coordinates and buffer coordinates interact. */
+ 
 #[derive(Eq, PartialEq, Clone)]
 struct BufferAttachment {
-    /** Buffer scale */
+     
     scale: u32,
-    /** Transform (from buffer to surface) */
+     
     transform: WlOutputTransform,
-    /** Viewport source x-offset,y-offset,width,height, all 24.8 fixed point and >=,>=,>,> 0 */
+     
     viewport_src: Option<(i32, i32, i32, i32)>,
-    /** Viewport destination width/height, should both be > 0 */
+     
     viewport_dst: Option<(i32, i32)>,
-    /** The buffer attached at the time the damage was committed (or an arbitrary value if
-     * the batch was not yet committed.) */
+     
     buffer_uid: u64,
-    /** Dimensions of the attached buffer; these are needed to properly evaluate transforms. */
+     
     buffer_size: (i32, i32),
 }
 
-/** Damage recorded for a surface during a commit interval, plus information
- * needed to interpret the damage and record the associated buffer. */
+ 
 #[derive(Clone)]
 struct DamageBatch {
-    /** Information about which buffer is used in this batch and how it is attached to the surface */
+     
     attachment: BufferAttachment,
-    /** wl_surface::damage directly applies in the surface coordinate space, and the conversion to buffer
-     * coordinate space can only be done at commit time, so these must be cached instead of immediately
-     * converted. */
+     
     damage: Vec<WlRect>,
-    /** Most clients use wl_surface::damage_buffer, which is easier to use and more precise than wl_surface::damage.
-     * For Waypipe, it is usually easier, except in the rare case of accumulating damage over different
-     * buffers whose attachment parameters differ (and thus whose buffer coordinate spaces differ); then
-     * one must convert between spaces. */
+     
     damage_buffer: Vec<WlRect>,
 }
 
-/** Additional information for wl_surface */
+ 
 struct ObjWlSurface {
     attached_buffer_id: Option<ObjId>,
-    /* The total damage for a buffer since the last time it was committed is given
-     * by the accumulateed damage committed. The pending state is at index 0,
-     * last commit at index 1, etc. */
+     
     damage_history: [DamageBatch; 7],
-    /* acquire/release timline points for explicit sync */
+     
     acquire_pt: Option<(u64, Rc<RefCell<ShadowFd>>)>,
     release_pt: Option<(u64, Rc<RefCell<ShadowFd>>)>,
 
-    /* unique wp_viewport object associated with this surface */
+     
     viewport_id: Option<ObjId>,
 }
 
-/** Additional information for wp_viewport */
+ 
 struct ObjWpViewport {
-    /** Surface to which this wp_viewport is attached. Is None when wl_surface has been destroyed. */
+     
     wl_surface: Option<ObjId>,
 }
 
-/** Additional information for wl_shm_pool */
+ 
 struct ObjWlShmPool {
     buffer: Rc<RefCell<ShadowFd>>,
 }
 
-/** Metadata indicating how a wl_buffer created from a wl_shm pool maps
- * onto the underlying pool */
+ 
 #[derive(Clone, Copy)]
 struct ObjWlBufferShm {
     width: i32,
@@ -117,124 +105,109 @@ struct ObjWlBufferShm {
     stride: i32,
 }
 
-/** Additional information for wl_buffer */
+ 
 struct ObjWlBuffer {
     sfd: Rc<RefCell<ShadowFd>>,
-    /* Metadata explaining how a wl_buffer relates to its underlying wl_shm_pool.'
-     * DMABUFs do not need this metadata because the shadowfd stores this information. */
+     
     shm_info: Option<ObjWlBufferShm>,
 
     unique_id: u64,
 }
 
-/** Data of a format tranche from zwp_linux_dmabuf_feedback_v1 */
+ 
 struct DmabufTranche {
     flags: u32,
-    /** Format table entries; these are interpreted _immediately_ when the
-     * tranche is provided, using the last format table to arrive. */
+     
     values: Vec<(u32, u64)>,
-    /** When translating tranche, cache output indices here */
+     
     indices: Vec<u8>,
     device: u64,
 }
 
-/** Additional information for zwp_linux_dmabuf_v1 */
+ 
 struct ObjZwpLinuxDmabuf {
-    /** Set of formats seen in .modifier events. This makes it possible to
-     * replace the first .modifier received with a full list of modifiers events
-     * for that format, and then drop all subsequent .modifier events with same
-     * format. (Alternatively, one could wait for "a roundtrip after binding" to
-     * determine when all format events have arrived, but this approach will never
-     * introduce any delay. */
+     
     formats_seen: BTreeSet<u32>,
 }
 
-/** Additional information for zwp_linux_dmabuf_feedback_v1 */
+ 
 struct ObjZwpLinuxDmabufFeedback {
-    /** Last format table received from the Wayland compositor */
+     
     input_format_table: Option<Vec<(u32, u64)>>,
-    /** Contents of last format table sent (or which will be sent to) to the Wayland client */
+     
     output_format_table: Option<Vec<u8>>,
 
     main_device: Option<u64>,
     tranches: Vec<DmabufTranche>,
     current: DmabufTranche,
-    /* If true, have already processed tranches */
+     
     processed: bool,
-    /* If true, should send format table when processing ::done */
+     
     queued_format_table: Option<(Rc<RefCell<ShadowFd>>, u32)>,
 }
 
-/** Additional information for zwp_linux_buffer_params_v1 */
+ 
 struct ObjZwpLinuxDmabufParams {
-    /* if using 'create', output dmabuf reference stored here before transferring to wl_buffer */
+     
     dmabuf: Option<Rc<RefCell<ShadowFd>>>,
-    // A bunch of zwp_linux_buffer_params_v1.add calls will be followed by create or create_immed,
-    // which provide the dimensions and format
+     
+     
     planes: Vec<AddDmabufPlane>,
-    // todo: the size is limited in practice, so instead of Vec one could use an array;
-    // however, this would require some way of handling drop (e.g., using Option<OwnedFd>)
-    // which might be awkward
+     
+     
+     
 }
 
-/** Additional information for wp_linux_drm_syncobj_surface_v1 */
+ 
 struct ObjWpDrmSyncobjSurface {
-    /* Corresponding wl_surface object */
+     
     surface: ObjId,
 }
 
-/** Additional information for wp_linux_drm_syncobj_timeline_v1 */
+ 
 struct ObjWpDrmSyncobjTimeline {
     timeline: Rc<RefCell<ShadowFd>>,
 }
 
-/** Additional information for zwlr_screencopy_frame_v1 */
+ 
 struct ObjZwlrScreencopyFrame {
-    /* Store sfd and shm metadata of target buffer in case the wl_buffer is destroyed early */
+     
     buffer: Option<(Rc<RefCell<ShadowFd>>, Option<ObjWlBufferShm>)>,
 }
 
-/** Additional information for ext_image_copy_capture_session_v1.
- *
- * The dmabuf device and formats need to be processed together in order to
- * restrict to what the upstream device and Waypipe both support. shm formats
- * are safe to pass through unmodified since, in the worst case, any shm format
- * can be handled by replicating the entire shm pool.
- */
+ 
 struct ObjExtImageCopyCaptureSession {
     dmabuf_device: Option<u64>,
     dmabuf_formats: Vec<(u32, Vec<u64>)>,
-    /* The sorted list of format/modifier pairs from the last batch of buffer constraint events */
+     
     last_format_mod_list: Vec<(u32, u64)>,
-    frame_list: Vec<ObjId>, /* At most one frame _should_ exist at a time */
+    frame_list: Vec<ObjId>,  
 }
 
-/** Additional information for ext_image_copy_capture_frame_v1 */
+ 
 struct ObjExtImageCopyCaptureFrame {
-    /* Store sfd and shm metadata of target buffer in case the wl_buffer is destroyed early */
+     
     buffer: Option<(Rc<RefCell<ShadowFd>>, Option<ObjWlBufferShm>)>,
 
-    /** This is reset to None when the parent session is destroyed. */
+     
     capture_session: Option<ObjId>,
 
-    /** If the parent session is destroyed, retain the last list of suppported modifiers here. */
+     
     supported_modifiers: Vec<(u32, u64)>,
 }
 
-/** Additional information for zwlr_gamma_control_v1 */
+ 
 struct ObjZwlrGammaControl {
     gamma_size: Option<u32>,
 }
 
-/** Additional information for wl_registry */
+ 
 struct ObjWlRegistry {
-    /** Store global advertisements for wp_linux_drm_syncobj_manager_v1
-     * until zwp_linux_dmabuf_v1 arrives and it is known whether Waypipe
-     * is able to handle DMABUFs and timeline semaphores. */
+     
     syncobj_manager_replay: Vec<(u32, u32)>,
 }
 
-/** Additional information attached to specific Wayland objects */
+ 
 enum WpExtra {
     WlSurface(Box<ObjWlSurface>),
     WlBuffer(Box<ObjWlBuffer>),
@@ -253,17 +226,16 @@ enum WpExtra {
     None,
 }
 
-/** This enum indicates in which direction messages are being processed, and
- * provides queues for ShadowFds or file descriptors to receive or send. */
+ 
 pub enum TranslationInfo<'a> {
-    // RID -> SFD/FD
+     
     FromChannel(
         (
             &'a mut VecDeque<Rc<RefCell<ShadowFd>>>,
             &'a mut VecDeque<Rc<RefCell<ShadowFd>>>,
         ),
     ),
-    // FD to SFD/RID
+     
     FromWayland(
         (
             &'a mut VecDeque<OwnedFd>,
@@ -272,8 +244,7 @@ pub enum TranslationInfo<'a> {
     ),
 }
 
-/** Given a Wayland rectangle, clip it with the \[0,0,w,h\] rectangle and return
- * the result, if nonempty */
+ 
 fn clip_wlrect_to_buffer(a: &WlRect, w: i32, h: i32) -> Option<Rect> {
     let x1 = a.x;
     let x2 = a.x.saturating_add(a.width);
@@ -295,18 +266,7 @@ fn clip_wlrect_to_buffer(a: &WlRect, w: i32, h: i32) -> Option<Rect> {
     }
 }
 
-/** Apply the viewport crop and scale to a rectangle in surface-local coordinates. After this,
- * apply buffer scale/transforms.
- *
- * `buffer_size` is the size of the buffer _after_ scale/transform operations.
- *
- * This rounds boundaries outward by up to a pixel, under the assumption that "linear" scaling
- * is used, not nearest-neighbor, cubic, fft, etc.
- *
- * view_src/view_dst should be valid for wp_viewporter
- *
- * This function saturates on overflow.
- */
+ 
 fn apply_viewport_transform(
     a: &WlRect,
     buffer_size: (i32, i32),
@@ -318,29 +278,28 @@ fn apply_viewport_transform(
     let dst: (i32, i32) = if let Some(x) = view_dst {
         (x.0, x.1)
     } else if let Some(x) = view_src {
-        /* in crop-only case, the crop rectangle size should be an integer */
+         
         (x.2 / 256, x.3 / 256)
     } else {
         (buffer_size.0, buffer_size.1)
     };
 
-    /* 1: clip rectangle to 'dst' */
+     
     let x1 = a.x.clamp(0, dst.0);
     let x2 = a.x.saturating_add(a.width).clamp(0, dst.0);
     let y1 = a.y.clamp(0, dst.1);
     let y2 = a.y.saturating_add(a.height).clamp(0, dst.1);
     if x2 <= x1 || y2 <= y1 {
-        /* Rectangle intersection with 'dst' region is empty. */
+         
         return None;
     }
 
-    /* Fixed point. Expand to i64 to avoid early clipping. */
+     
     if let Some(v) = view_src {
         assert!(v.0 >= 0 && v.1 >= 0 && v.2 > 0 && v.3 > 0);
 
         fn source_floor(v: i32, dst: i32, src_sz_fixed: i32, src_offset_fixed: i32) -> u32 {
-            /* Fixed point calculation: floor(x1 * src.width / dst.width + src.x1), where src.width, src.x1 are in 24.8 fixed point.
-             * Worst case: may use 62 bits for multiplication result and 32 for addition. */
+             
             (((v as u64) * (src_sz_fixed as u64) / (dst as u64) + (src_offset_fixed as u64)) / 256)
                 as u32
         }
@@ -350,9 +309,7 @@ fn apply_viewport_transform(
                 .div_ceil(256)) as u32
         }
 
-        /* The rectangle should either map into the rectangle given by buffer_transformed_size,
-         * or else there should be a protocol error because the viewport src is out of bounds;
-         * however, it is safe for Waypipe to just clip the region and not raise an error. */
+         
         let sx1 = source_floor(x1, dst.0, v.2, v.0).min(buffer_size.0 as u32);
         let sx2 = source_ceil(x2, dst.0, v.2, v.0).min(buffer_size.0 as u32);
         let sy1 = source_floor(y1, dst.1, v.3, v.1).min(buffer_size.1 as u32);
@@ -367,12 +324,12 @@ fn apply_viewport_transform(
             y2: sy2,
         })
     } else {
-        /* When view_dst=None, buffer_size = dst and this scaling has no effect. */
+         
         let sx1 = (((x1 as u64) * (buffer_size.0 as u64)) / (dst.0 as u64)) as u32;
         let sx2 = (((x2 as u64) * (buffer_size.0 as u64)).div_ceil(dst.0 as u64)) as u32;
         let sy1 = (((y1 as u64) * (buffer_size.1 as u64)) / (dst.1 as u64)) as u32;
         let sy2 = (((y2 as u64) * (buffer_size.1 as u64)).div_ceil(dst.1 as u64)) as u32;
-        /* Only clip by transformed size */
+         
         Some(Rect {
             x1: sx1,
             x2: sx2,
@@ -382,14 +339,7 @@ fn apply_viewport_transform(
     }
 }
 
-/** Transform a rectangle indicating damage on a surface to a rectangle indicating
- * damage on a buffer.
- *
- * `scale` and `transform` are those of the surface; `width` and `height` those of the buffer.
- *
- * `view_src`/`view_dst` are validated viewport source and destination parameters.
- *
- * This clips the damage to the surface and returns None if the result is nonempty. */
+ 
 fn apply_damage_rect_transform(
     a: &WlRect,
     scale: u32,
@@ -399,8 +349,7 @@ fn apply_damage_rect_transform(
     width: i32,
     height: i32,
 ) -> Option<Rect> {
-    /* Each of the eight transformations corresponds to a
-     * unique set of reflections: X<->Y | Xflip | Yflip */
+     
     let seq = [0b000, 0b011, 0b110, 0b101, 0b010, 0b001, 0b100, 0b111];
     let code = seq[transform as u32 as usize];
     let swap_xy = code & 0x1 != 0;
@@ -415,7 +364,7 @@ fn apply_damage_rect_transform(
 
     let b = apply_viewport_transform(a, pre_vp_size, view_src, view_dst)?;
 
-    // These should not overflow, since b should be clipped to `pre_vp_size`.
+     
     let mut xl = b.x1.checked_mul(scale).unwrap();
     let mut yl = b.y1.checked_mul(scale).unwrap();
     let mut xh = b.x2.checked_mul(scale).unwrap();
@@ -441,10 +390,7 @@ fn apply_damage_rect_transform(
     })
 }
 
-/** Invert a viewport transform, rounding damage rectangle sizes up.
- *
- * The input is a nondegenerate rectangle _contained in_ the [0..buffer_size] rectangle.
- */
+ 
 fn inverse_viewport_transform(
     a: &Rect,
     buffer_size: (i32, i32),
@@ -456,7 +402,7 @@ fn inverse_viewport_transform(
         a.x1 < a.x2 && a.y1 < a.y2 && a.x2 <= buffer_size.0 as u32 && a.y2 <= buffer_size.1 as u32
     );
 
-    /* 1: convert to .8 fixed point, and clip rectangle to 'src' */
+     
     let (mut x1, mut x2, mut y1, mut y2) = (
         (a.x1 as u64) * 256,
         (a.x2 as u64) * 256,
@@ -471,40 +417,35 @@ fn inverse_viewport_transform(
         y1 = y1.clamp(sy as u64, e.1) - (sy as u64);
         y2 = y2.clamp(sy as u64, e.1) - (sy as u64);
 
-        /* Per protocol, parts of damage outside surface dimensions are ignored */
+         
         if x2 <= x1 || y2 <= y1 {
             return None;
         }
     };
-    /* src size, in .8 fixed point */
+     
     let src: (u64, u64) = if let Some(x) = view_src {
         (x.2 as u64, x.3 as u64)
     } else {
         (buffer_size.0 as u64 * 256, buffer_size.1 as u64 * 256)
     };
 
-    /* 2: scale to 'dst' and round result to integer */
+     
     let dst: (u32, u32) = if let Some(x) = view_dst {
         (x.0 as u32, x.1 as u32)
     } else if let Some(x) = view_src {
-        /* in crop-only case, the crop rectangle size should be an integer */
+         
         (x.2 as u32 / 256, x.3 as u32 / 256)
     } else {
         (buffer_size.0 as u32, buffer_size.1 as u32)
     };
 
-    /* Rectangle coordinates, in fixed point, are up to 31+8 bits,
-     * dst is at most 31 bits, and src.0 is at most 31 bits. Do operations
-     * in u128 to ensure 31+31+8 bit intermediate products are not clipped.
-     * (Note: it is possible to reduce the intermediate product size, since
-     * if view_src is not None, coordinates are clipped to 32 bits, and
-     * otherwise are divisible by 256.) */
+     
     let xl = ((x1 as u128) * (dst.0 as u128)) / (src.0 as u128);
     let xh = ((x2 as u128) * (dst.0 as u128)).div_ceil(src.0 as u128);
     let yl = ((y1 as u128) * (dst.1 as u128)) / (src.1 as u128);
     let yh = ((y2 as u128) * (dst.1 as u128)).div_ceil(src.1 as u128);
     assert!(xh > xl && yh > yl);
-    /* Results should fall within [0,i32::MAX] since dst is so bounded, and coordinates are <= src*256. */
+     
     assert!(xh <= i32::MAX as _ && yh <= i32::MAX as _);
     Some(WlRect {
         x: xl as i32,
@@ -514,12 +455,7 @@ fn inverse_viewport_transform(
     })
 }
 
-/** Transform a rectangle indicating damage on a buffer to a rectangle
- * indicating damage on a surface.
- *
- * The rectangle processed may be clipped to the buffer size and to the viewport size;
- * None will be returned if it has no overlap with the surface extents.
- */
+ 
 fn inverse_damage_rect_transform(
     a: &WlRect,
     scale: u32,
@@ -531,8 +467,7 @@ fn inverse_damage_rect_transform(
 ) -> Option<WlRect> {
     assert!(width > 0 && height > 0 && scale > 0);
 
-    /* Each of the eight transformations corresponds to a
-     * unique set of reflections: X<->Y | Xflip | Yflip */
+     
     let seq = [0b000, 0b011, 0b110, 0b101, 0b010, 0b001, 0b100, 0b111];
     let code = seq[transform as u32 as usize];
     let swap_xy = code & 0x1 != 0;
@@ -544,7 +479,7 @@ fn inverse_damage_rect_transform(
     let mut yl = a.y.clamp(0, height) as u32;
     let mut yh = a.y.saturating_add(a.height).clamp(0, height) as u32;
     if xh <= xl || yh <= yl {
-        /* Rectangle is degenerate after clipping */
+         
         return None;
     }
     let (end_w, end_h) = if swap_xy {
@@ -580,20 +515,17 @@ fn inverse_damage_rect_transform(
     inverse_viewport_transform(&b, post_vp_size, view_src, view_dst)
 }
 
-/** Get an interval containing the entire memory region corresponding to the buffer */
+ 
 fn damage_for_entire_buffer(buffer: &ObjWlBufferShm) -> (usize, usize) {
     let start = (buffer.offset) as usize;
     let end = if let Some(layout) = get_shm_format_layout(buffer.format) {
         let mut end = start;
         assert!(buffer.stride >= 0 && buffer.width >= 0 && buffer.height >= 0);
-        // TODO: use checked_mul and return None on overflow?
+         
         let ext_stride = (buffer.stride as u32) * layout.planes[0].hsub.get();
 
         for plane in layout.planes {
-            /* In practice, divisions should always be exact/with no remainder;
-             * in case odd sizes are for some reason used, the most sensible thing
-             * to do is round up. (Exactly how to calculate these parameters is left
-             * entirely unspecified by the Wayland protocol as of writing.) */
+             
             let plane_stride = (ext_stride * plane.bpt.get())
                 .div_ceil(layout.planes[0].bpt.get() * plane.hsub.get());
             let plane_height = (buffer.height as u32).div_ceil(plane.vsub.get());
@@ -607,8 +539,7 @@ fn damage_for_entire_buffer(buffer: &ObjWlBufferShm) -> (usize, usize) {
     (64 * (start / 64), align(end, 64))
 }
 
-/** Return a list of rectangular areas damaged on a surface since the last time the given
- * buffer was committed; the rectangles are not guaranteed to be disjoint. */
+ 
 fn get_damage_rects(surface: &ObjWlSurface, attachment: &BufferAttachment) -> Vec<Rect> {
     let (width, height) = attachment.buffer_size;
     let mut rects = Vec::<Rect>::new();
@@ -619,40 +550,28 @@ fn get_damage_rects(surface: &ObjWlSurface, attachment: &BufferAttachment) -> Ve
         y2: height.try_into().unwrap(),
     };
 
-    /* The first slot will later be updated to match `attachment`. */
+     
     let Some(first_idx_offset) = surface
         .damage_history
         .iter()
         .skip(1)
         .position(|x| x.attachment.buffer_uid == attachment.buffer_uid)
     else {
-        /* First time this buffer was seen at all; mark the entire buffer as damaged */
+         
         rects.push(full_damage);
         return rects;
     };
     let first_idx = first_idx_offset + 1;
     if surface.damage_history[first_idx].attachment != *attachment {
-        /* Require an exact match: it is posssible that the surface->buffer coordinate
-         * transform and the buffer contents have changed in concert so that the surface
-         * pixels remain the same, even though all buffer pixels are different. In this
-         * scenario no damage will be reported. However, Waypipe must still update all
-         * pixels, because the compositor may read from and rerender the surface at any
-         * time. It is only when the visible surface contents have no damage and the
-         * coordinate transform stays the same that the contents of the buffer are pinned.
-         *
-         * Note: in theory, one could special-case viewport-resize operations which preserve
-         * the mapping for all retained surface pixels, and then automatically damage the
-         * buffer pixels that are newly made visible. (Clients may do this to enable
-         * high-performance smooth resizing.)
-         */
+         
         rects.push(full_damage);
         return rects;
     }
 
-    /* Scan all recorded damage from previous commits */
+     
     for (i, batch) in surface.damage_history[..first_idx].iter().enumerate() {
         if i == 0 {
-            /* Special case: damage to the target buffer needs no conversion */
+             
             for w in &batch.damage_buffer {
                 if let Some(r) = clip_wlrect_to_buffer(w, width, height) {
                     rects.push(r);
@@ -660,12 +579,7 @@ fn get_damage_rects(surface: &ObjWlSurface, attachment: &BufferAttachment) -> Ve
             }
         } else {
             for w in &batch.damage_buffer {
-                /* Translate damage from this buffer's coordinate space to the current
-                 * buffer's coordinate space, through the surface coordinate space.
-                 *
-                 * Note: buffer damage can be more precise than surface damage when the
-                 * scale is > 1 or wp_viewporter is involved, so this can round up buffer
-                 * sizes more than strictly necessary. */
+                 
                 let Some(s) = inverse_damage_rect_transform(
                     w,
                     batch.attachment.scale,
@@ -692,12 +606,7 @@ fn get_damage_rects(surface: &ObjWlSurface, attachment: &BufferAttachment) -> Ve
         }
 
         for w in &batch.damage {
-            /* Convert from surface space to local space, using the _current_ transform.
-             *
-             * Note: the damage is clipped according to the current surface size;
-             * technically one could clip damage at each commit according to the then-current
-             * surface size, and then reclip it for this one; however, such an optimization
-             * would be complicated and only benefits weird clients, so is not worth doing. */
+             
             if let Some(r) = apply_damage_rect_transform(
                 w,
                 attachment.scale,
@@ -714,8 +623,7 @@ fn get_damage_rects(surface: &ObjWlSurface, attachment: &BufferAttachment) -> Ve
     rects
 }
 
-/** Compute the (disjoint) damage intervals for a shared memory pool used by the buffer,
- * using damage accumulated since the last time the buffer was committed */
+ 
 fn get_damage_for_shm(
     buffer: &ObjWlBuffer,
     surface: &ObjWlSurface,
@@ -757,14 +665,13 @@ fn get_damage_for_shm(
     )
 }
 
-/** Compute the (disjoint) damage intervals for the linear view of a DMABUF's contents,
- * using damage accumulated since the last time the buffer was committed */
+ 
 fn get_damage_for_dmabuf(
     sfdd: &ShadowFdDmabuf,
     surface: &ObjWlSurface,
     attachment: &BufferAttachment,
 ) -> Vec<(usize, usize)> {
-    // TODO: deduplicate implementations
+     
     let (nom_len, width) = match sfdd.buf {
         DmabufImpl::Vulkan(ref buf) => (buf.nominal_size(sfdd.view_row_stride), buf.width),
         DmabufImpl::Gbm(ref buf) => (buf.nominal_size(sfdd.view_row_stride), buf.width),
@@ -797,14 +704,13 @@ fn get_damage_for_dmabuf(
     let bpp = p0.bpt.get();
 
     let mut rects = get_damage_rects(surface, attachment);
-    /* Stride: tightly packed. */
-    // except: possibly gcd(4,bpp) aligned ?
+     
+     
     let stride = sfdd.view_row_stride.unwrap_or(width * bpp);
     compute_damaged_segments(&mut rects[..], 6, 128, 0, stride as usize, bpp as usize)
 }
 
-/** Construct a format table for use by the zwp_linux_dmabuf_v1 protocol,
- * from the tranches */
+ 
 fn process_dmabuf_feedback(feedback: &mut ObjZwpLinuxDmabufFeedback) -> Result<Vec<u8>, String> {
     let mut index: BTreeMap<(u32, u64), u16> = BTreeMap::new();
     for t in feedback.tranches.iter() {
@@ -841,16 +747,16 @@ fn process_dmabuf_feedback(feedback: &mut ObjZwpLinuxDmabufFeedback) -> Result<V
     Ok(table)
 }
 
-/** Construct a format table for use by the zwp_linux_dmabuf_v1 protocol */
+ 
 fn rebuild_format_table(
     dmabuf_dev: &DmabufDevice,
     feedback: &mut ObjZwpLinuxDmabufFeedback,
 ) -> Result<(), String> {
-    /* Identify the remotely supported formats */
+     
     let mut remote_formats = BTreeSet::<u32>::new();
     for t in feedback.tranches.iter() {
         if t.device != feedback.main_device.unwrap() {
-            /* Only use main device of compositor; at least one tranche will use it. */
+             
             continue;
         }
         for (fmt, _modifier) in t.values.iter() {
@@ -858,7 +764,7 @@ fn rebuild_format_table(
         }
     }
 
-    /* Regenerate tranches, roughly matching original _format_ preferences */
+     
     let mut new_tranches = Vec::<DmabufTranche>::new();
     for t in feedback.tranches.iter() {
         if t.device != feedback.main_device.unwrap() {
@@ -873,8 +779,7 @@ fn rebuild_format_table(
         };
 
         for (fmt, _modifier) in t.values.iter() {
-            /* Record each format in exactly one tranche, preferring earlier tranches;
-             * all modifiers for a format are put in the same tranche. */
+             
             if remote_formats.remove(fmt) {
                 let mods = dmabuf_dev_modifier_list(dmabuf_dev, *fmt);
                 for m in mods {
@@ -896,14 +801,7 @@ fn rebuild_format_table(
     Ok(())
 }
 
-/** Add new modifiers to the format-to-modifier-list table.
- *
- * Modifiers added are not deduplicated; if `modifiers` is empty nothing will be done.
- *
- * This can theoretically lead to quadratic runtime, but should only be used with
- * modifiers that are a subset of what Waypipe supports, so list lengths will
- * never be long.
- */
+ 
 fn add_advertised_modifiers(map: &mut BTreeMap<u32, Vec<u64>>, format: u32, modifiers: &[u64]) {
     if modifiers.is_empty() {
         return;
@@ -916,7 +814,7 @@ fn add_advertised_modifiers(map: &mut BTreeMap<u32, Vec<u64>>, format: u32, modi
     }
 }
 
-/** Record a new Wayland object, checking that its ID was not already used */
+ 
 fn insert_new_object(
     objects: &mut BTreeMap<ObjId, WpObject>,
     id: ObjId,
@@ -932,7 +830,7 @@ fn insert_new_object(
     Ok(())
 }
 
-/** Register any new objects created by a message */
+ 
 fn register_generic_new_ids(
     msg: &[u8],
     meth: &WaylandMethod,
@@ -946,7 +844,7 @@ fn register_generic_new_ids(
                 let _ = parse_u32(&mut tail);
             }
             WaylandArgument::Fd => {
-                // do nothing
+                 
             }
             WaylandArgument::Object(_) | WaylandArgument::GenericObject => {
                 let _ = parse_obj(&mut tail)?;
@@ -964,7 +862,7 @@ fn register_generic_new_ids(
                 )?;
             }
             WaylandArgument::GenericNewId => {
-                // order: (string, version, new_id)
+                 
                 let string = parse_string(&mut tail)?
                     .ok_or_else(|| tag!("New id string should not be null"))?;
                 let _version = parse_u32(&mut tail)?;
@@ -975,8 +873,7 @@ fn register_generic_new_ids(
                 }
 
                 if let Some(new_intf) = lookup_intf_by_name(string) {
-                    /* Only track recognized object types; messages for
-                     * unrecognized types will be ignored. */
+                     
                     glob.objects.insert(
                         id,
                         WpObject {
@@ -1003,24 +900,24 @@ fn register_generic_new_ids(
     Ok(())
 }
 
-/** Copy a message to the destination buffer */
+ 
 fn copy_msg(msg: &[u8], dst: &mut &mut [u8]) {
     dst[..msg.len()].copy_from_slice(msg);
     *dst = &mut std::mem::take(dst)[msg.len()..];
 }
-/** Copy a message, stripping or adding the Waypipe-specific fd count field */
+ 
 fn copy_msg_tag_fd(msg: &[u8], dst: &mut &mut [u8], from_channel: bool) -> Result<(), String> {
     dst[..msg.len()].copy_from_slice(msg);
     let mut h2 = u32::from_le_bytes(dst[4..8].try_into().unwrap());
 
     if from_channel {
-        // drop the upper bits of the opcode entirely
+         
         if h2 & (1 << 11) == 0 {
             return Err(tag!("header part {:x} missing fd tag", h2));
         }
         h2 &= !0xff00;
     } else {
-        // tag message as using one file descriptor
+         
         h2 = (h2 & !0xff00) | (1 << 11);
     }
     dst[4..8].copy_from_slice(&u32::to_le_bytes(h2));
@@ -1029,12 +926,12 @@ fn copy_msg_tag_fd(msg: &[u8], dst: &mut &mut [u8], from_channel: bool) -> Resul
     Ok(())
 }
 
-/** Return true iff `id` in the Wayland server allocation range */
+ 
 fn is_server_object(id: ObjId) -> bool {
     id.0 >= 0xff000000
 }
 
-/** Default processing for an identified Wayland message */
+ 
 fn default_proc_way_msg(
     msg: &[u8],
     dst: &mut &mut [u8],
@@ -1044,8 +941,8 @@ fn default_proc_way_msg(
     glob: &mut Globals,
 ) -> Result<ProcMsg, String> {
     if dst.len() < msg.len() {
-        // Not enough space to store the message. Then edit the
-        // protocol message in place, and stop processing.
+         
+         
         return Ok(ProcMsg::NeedsSpace((msg.len(), 0)));
     }
 
@@ -1053,38 +950,38 @@ fn default_proc_way_msg(
 
     if meth.destructor {
         if !is_req {
-            // Deletion events; process immediately; object is already in map
+             
             glob.objects.remove(&object_id).unwrap();
         } else if is_server_object(object_id) {
-            // TODO: is zombie handling necessary, when clients delete server generated objects?
+             
             glob.objects.remove(&object_id).unwrap();
         } else {
-            // client object, destructor request: wait until: wl_display.delete_id
+             
         }
     }
     copy_msg(msg, dst);
     Ok(ProcMsg::Done)
 }
 
-/** Process an unidentified Wayland message */
+ 
 fn proc_unknown_way_msg(
     msg: &[u8],
     dst: &mut &mut [u8],
     transl: TranslationInfo,
 ) -> Result<ProcMsg, String> {
-    /* Untracked, unidentified object with unknown message */
+     
     if let TranslationInfo::FromChannel((x, y)) = transl {
         let mut header2 = u32::from_le_bytes(msg[4..8].try_into().unwrap());
         let ntagfds = ((header2 & ((1 << 16) - 1)) >> 11) as usize;
-        // This is usually safe for simple file transfers (like keymaps),
-        // where as long as the sending side recognizes the file it can
-        // be replicated OK.
+         
+         
+         
         if ntagfds > 0 {
             error!("Unidentified message has {} fds attached according to other Waypipe instance; blindly transferring them", ntagfds);
         }
 
         if dst.len() < msg.len() || y.len() + ntagfds > MAX_OUTGOING_FDS {
-            // Not enough space to store the message.
+             
             return Ok(ProcMsg::NeedsSpace((msg.len(), ntagfds)));
         }
 
@@ -1105,16 +1002,16 @@ fn proc_unknown_way_msg(
             y.push_back(sfd);
         }
 
-        /* Copy message to wayland, removing fd tags */
+         
         dst[..msg.len()].copy_from_slice(msg);
         header2 &= !0xf800;
         dst[4..8].copy_from_slice(&u32::to_le_bytes(header2));
     } else {
         if dst.len() < msg.len() {
-            // Not enough space to store the message.
+             
             return Ok(ProcMsg::NeedsSpace((msg.len(), 0)));
         }
-        /* Copy message to channel, assuming no fds are attached */
+         
         dst[..msg.len()].copy_from_slice(msg);
     }
 
@@ -1122,8 +1019,7 @@ fn proc_unknown_way_msg(
     Ok(ProcMsg::Done)
 }
 
-/** Parse and return the entries of a zwp_linux_dmabuf_v1 format table. Any
- * trailing bytes after the last multiple of 16 will be ignored */
+ 
 fn parse_format_table(data: &[u8]) -> Vec<(u32, u64)> {
     let mut t = Vec::new();
     for chunk in data.chunks_exact(16) {
@@ -1134,10 +1030,9 @@ fn parse_format_table(data: &[u8]) -> Vec<(u32, u64)> {
     t
 }
 
-/** Parse a `dev_t` array into a u64 */
+ 
 fn parse_dev_array(arr: &[u8]) -> Option<u64> {
-    /* dev_t may be smaller on some old systems, but detection of this is complicated, so
-     * accept both reasonable options */
+     
     if arr.len() == 4 {
         Some(u32::from_le_bytes(arr.try_into().unwrap()) as u64)
     } else if arr.len() == 8 {
@@ -1147,8 +1042,7 @@ fn parse_dev_array(arr: &[u8]) -> Option<u64> {
     }
 }
 
-/** Convert a `u64` into an array of size `dev_t`. On systems where dev_t
- * is u32, the high bits are expected to be zero. */
+ 
 fn write_dev_array(dev: u64) -> [u8; SIZEOF_DEV_T] {
     let b = dev.to_le_bytes();
     let (dev, leftover) = b.split_at(SIZEOF_DEV_T);
@@ -1156,17 +1050,17 @@ fn write_dev_array(dev: u64) -> [u8; SIZEOF_DEV_T] {
     dev.try_into().unwrap()
 }
 
-/** Assuming the ShadowFd has file type, return whether has pending apply tasks? */
+ 
 fn file_has_pending_apply_tasks(sfd: &RefCell<ShadowFd>) -> Result<bool, String> {
     let b = sfd.borrow();
     let ShadowFdVariant::File(data) = &b.data else {
-        // TODO: make this a helper function
+         
         return Err(tag!("ShadowFd is not of file type"));
     };
     Ok(data.pending_apply_tasks > 0)
 }
 
-/** Compute the midpoint of two timestamps, rounding to -∞ */
+ 
 fn timespec_midpoint(stamp_1: libc::timespec, stamp_3: libc::timespec) -> libc::timespec {
     let mut mid_nsec = if stamp_1.tv_nsec < stamp_3.tv_nsec {
         stamp_1.tv_nsec + (stamp_3.tv_nsec - stamp_1.tv_nsec) / 2
@@ -1192,9 +1086,7 @@ fn timespec_midpoint(stamp_1: libc::timespec, stamp_3: libc::timespec) -> libc::
     }
 }
 
-/** Estimate the time difference between two clocks.
- *
- * Return value is: (sec_diff, nsec_diff) where nsec_diff >= 0 */
+ 
 fn clock_sub(clock_a: u32, clock_b: u32) -> Result<(i64, u32), String> {
     let mut stamp_1 = libc::timespec {
         tv_sec: 0,
@@ -1205,8 +1097,8 @@ fn clock_sub(clock_a: u32, clock_b: u32) -> Result<(i64, u32), String> {
     let ca: libc::clockid_t = clock_a.try_into().unwrap();
     let cb: libc::clockid_t = clock_b.try_into().unwrap();
     unsafe {
-        // SAFETY: clock_gettime only writes into second argument, which is repr(C)
-        // and thus properly aligned
+         
+         
         let ret1 = libc::clock_gettime(ca, &mut stamp_1);
         let ret2 = libc::clock_gettime(cb, &mut stamp_2);
         let ret3 = libc::clock_gettime(ca, &mut stamp_3);
@@ -1220,7 +1112,7 @@ fn clock_sub(clock_a: u32, clock_b: u32) -> Result<(i64, u32), String> {
     }
 
     let stamp_avg = timespec_midpoint(stamp_1, stamp_3);
-    /* tv_sec is i32 on pre-Y2K38 systems */
+     
     #[allow(clippy::unnecessary_cast)]
     let mut tv_sec = stamp_avg
         .tv_sec
@@ -1240,7 +1132,7 @@ fn clock_sub(clock_a: u32, clock_b: u32) -> Result<(i64, u32), String> {
     Ok((tv_sec, tv_nsec as u32))
 }
 
-/** Add a signed time offset to a time point, returning None on overflow. */
+ 
 fn time_add(mut a: (u64, u32), b: (i64, u32)) -> Option<(u64, u32)> {
     assert!(a.1 < 1_000_000_000 && b.1 < 1_000_000_000);
     let mut nsec = a.1.checked_add(b.1)?;
@@ -1249,12 +1141,11 @@ fn time_add(mut a: (u64, u32), b: (i64, u32)) -> Option<(u64, u32)> {
         a.0 = a.0.checked_add(1)?;
     }
 
-    // 64-bit time overflow should never happen in practice
+     
     Some((a.0.checked_add_signed(b.0)?, nsec))
 }
 
-/** Convert the given timestamp from/to the specified clock ID to/from the realtime
- * clock, depending on whether message is going toward the channel or not.  */
+ 
 fn translate_timestamp(
     tv_sec_hi: u32,
     tv_sec_lo: u32,
@@ -1265,11 +1156,11 @@ fn translate_timestamp(
     let tv_sec = join_u64(tv_sec_hi, tv_sec_lo);
     let realtime = libc::CLOCK_REALTIME as u32;
     let (new_sec, new_nsec) = if to_channel {
-        /* Convert from clock_id to CLOCK_REALTIME */
+         
         let (diff_sec, diff_nsec) = clock_sub(realtime, clock_id)?;
         time_add((tv_sec, tv_nsec), (diff_sec, diff_nsec)).ok_or_else(|| tag!("overflow"))?
     } else {
-        /* Convert from CLOCK_REALTIME to clock_id */
+         
         let (diff_sec, diff_nsec) = clock_sub(clock_id, realtime)?;
         time_add((tv_sec, tv_nsec), (diff_sec, diff_nsec)).ok_or_else(|| tag!("overflow"))?
     };
@@ -1277,11 +1168,7 @@ fn translate_timestamp(
     Ok((new_sec_hi, new_sec_lo, new_nsec))
 }
 
-/** Handle a readonly file whose contents need exact replication.
- *
- * When the message comes from Wayland, translate it; when the message comes from the
- * channel, return Ok(Some(ProcMsg::WaitFor(...))) if the file is not yet ready to export.
- */
+ 
 fn translate_or_wait_for_fixed_file(
     transl: TranslationInfo,
     glob: &mut Globals,
@@ -1312,12 +1199,12 @@ fn translate_or_wait_for_fixed_file(
     Ok(None)
 }
 
-/** A helper structure to print a Wayland method's arguments, on demand */
+ 
 struct MethodArguments<'a> {
     meth: &'a WaylandMethod,
     msg: &'a [u8],
 }
-/** Display a Wayland method's arguments; error if parsing failed, return true if formatter error */
+ 
 fn fmt_method(arg: &MethodArguments, f: &mut Formatter<'_>) -> Result<bool, &'static str> {
     assert!(arg.msg.len() >= 8);
     let mut tail: &[u8] = &arg.msg[8..];
@@ -1351,7 +1238,7 @@ fn fmt_method(arg: &MethodArguments, f: &mut Formatter<'_>) -> Result<bool, &'st
                 }
             }
             WaylandArgument::Fd => {
-                // do nothing
+                 
                 if write!(f, "fd").is_err() {
                     return Ok(true);
                 }
@@ -1375,7 +1262,7 @@ fn fmt_method(arg: &MethodArguments, f: &mut Formatter<'_>) -> Result<bool, &'st
                 }
             }
             WaylandArgument::GenericNewId => {
-                // order: (string, version, new_id)
+                 
                 let ostring = parse_string(&mut tail)?;
                 let version = parse_u32(&mut tail)?;
                 let id = parse_u32(&mut tail)?;
@@ -1436,29 +1323,23 @@ impl Display for MethodArguments<'_> {
     }
 }
 
-/** Result of a message processing attempt */
+ 
 #[derive(Debug, Eq, PartialEq)]
 pub enum ProcMsg {
-    /** Message successfully processed */
+     
     Done,
-    /* Not enough bytes or fds in the output queue to process the message.
-     *
-     * The argument is the (number of bytes, number of fds) needed */
+     
     NeedsSpace((usize, usize)),
-    /** Need to wait for all operations on a given RID to complete.
-     *
-     * This is only useful for messages coming from the channel whose associated
-     * processing might still be in progress. */
+     
     WaitFor(Rid),
 }
 
-/** Returns true iff `x` is <= `y` in both coordinates */
+ 
 fn space_le(x: (usize, usize), y: (usize, usize)) -> bool {
     x.0 <= y.0 && x.1 <= y.1
 }
 
-/** Macro to check if the required space (`x` bytes, `y` fds) is more than
- * the available space (`r.0` and `r.1`) and if so, return the required space. */
+ 
 macro_rules! check_space {
     ($x:expr, $y:expr, $r:expr) => {
         let space: (usize, usize) = ($x, $y);
@@ -1468,12 +1349,7 @@ macro_rules! check_space {
     };
 }
 
-/** Process a Wayland message; typically this just copies the message from the source
- * to the destination buffer, but sometimes messages are dropped and inserted, and file
- * descriptor processing is done or queued.
- *
- * The function returns ProcMsg depending on whether the message was processed or
- * if some condition must be met first. */
+ 
 pub fn process_way_msg(
     msg: &[u8],
     dst: &mut &mut [u8],
@@ -1484,7 +1360,7 @@ pub fn process_way_msg(
     let header2 = u32::from_le_bytes(msg[4..8].try_into().unwrap());
     let length = (header2 >> 16) as usize;
     assert!(msg.len() == length);
-    // drop bits 11-16 from the opcode, as these may encode fds
+     
     let opcode = (header2 & ((1 << 11) - 1)) as usize;
 
     let (from_channel, outgoing_fds): (bool, usize) = match &transl {
@@ -1518,7 +1394,7 @@ pub fn process_way_msg(
     }
 
     let meth = opt_meth.unwrap();
-    /* note: this may fail */
+     
     if log::log_enabled!(log::Level::Debug) {
         debug!(
             "Processing {}: {}#{}.{}({})",
@@ -1549,7 +1425,7 @@ pub fn process_way_msg(
             }
 
             if let Some(_removed) = glob.objects.remove(&object_id) {
-                /* Cleanup .extra state: currently nothing to do */
+                 
             } else {
                 debug!("Deleted untracked object");
             }
@@ -1578,11 +1454,10 @@ pub fn process_way_msg(
         (WaylandInterface::WlCallback, OPCODE_WL_CALLBACK_DONE) => {
             check_space!(msg.len(), 0, remaining_space);
             copy_msg(msg, dst);
-            /* This object has a destructor event, and no methods, so
-             * it is considered deleted immediately on receipt of the message */
+             
             glob.objects.remove(&object_id);
 
-            // TODO: handle all 'destructor-events' like this, including those for compositor-created objects?
+             
             Ok(ProcMsg::Done)
         }
         (WaylandInterface::WlShm, OPCODE_WL_SHM_CREATE_POOL) => {
@@ -1600,8 +1475,8 @@ pub fn process_way_msg(
                     sfd
                 }
                 TranslationInfo::FromWayland((x, y)) => {
-                    // Note: actual file size provided may be larger than pool_size,
-                    // since there may be following wl_shm_pool::resize calls
+                     
+                     
 
                     let v = translate_shm_fd(
                         x.pop_front().ok_or_else(|| tag!("Missing fd"))?,
@@ -1681,8 +1556,7 @@ pub fn process_way_msg(
             copy_msg(msg, dst);
 
             if glob.on_display_side {
-                /* The application side is responsible for notifying the display
-                 * side of the updated buffer size and its contents. */
+                 
                 return Ok(ProcMsg::Done);
             }
 
@@ -1695,8 +1569,8 @@ pub fn process_way_msg(
             if let ShadowFdVariant::File(ref mut y) = x.data {
                 y.buffer_size = new_size;
 
-                // extend the mirror and initialize a new mapping
-                // requires that no other operations be in progress on mapping
+                 
+                 
                 update_core_for_new_size(&y.fd, new_size, &mut y.core)?;
             }
 
@@ -1830,7 +1704,7 @@ pub fn process_way_msg(
             copy_msg(msg, dst);
 
             if glob.on_display_side {
-                /* Only the buffers on the application side will be dirty */
+                 
                 return Ok(ProcMsg::Done);
             }
 
@@ -1840,7 +1714,7 @@ pub fn process_way_msg(
 
             let (x, y, width, height) = parse_req_wl_surface_damage(msg)?;
             if width <= 0 || height <= 0 {
-                /* This doesn't appear to be a protocol error; still, filter out degenerate rectangles */
+                 
                 error!(
                     "Received degenerate damage rectangle: x={} y={} w={} h={}",
                     x, y, width, height
@@ -1861,7 +1735,7 @@ pub fn process_way_msg(
             copy_msg(msg, dst);
 
             if glob.on_display_side {
-                /* Only the buffers on the application side will be dirty */
+                 
                 return Ok(ProcMsg::Done);
             }
 
@@ -1871,7 +1745,7 @@ pub fn process_way_msg(
 
             let (x, y, width, height) = parse_req_wl_surface_damage_buffer(msg)?;
             if width <= 0 || height <= 0 {
-                /* This doesn't appear to be a protocol error; still, filter out degenerate rectangles */
+                 
                 error!(
                     "Received degenerate damage rectangle: x={} y={} w={} h={}",
                     x, y, width, height
@@ -1908,10 +1782,9 @@ pub fn process_way_msg(
                             let apply_count = if let ShadowFdVariant::File(data) = &b.data {
                                 data.pending_apply_tasks
                             } else if let ShadowFdVariant::Dmabuf(data) = &b.data {
-                                /* Note: there must be a wait _somewhere_ when using timelines, otherwise diffs may be received faster
-                                 * than they can be processed. */
+                                 
                                 if has_timelines {
-                                    0 /* do not wait for tasks; will signal acquire semaphore on last task completion */
+                                    0  
                                 } else {
                                     data.pending_apply_tasks
                                 }
@@ -1929,7 +1802,7 @@ pub fn process_way_msg(
             copy_msg(msg, dst);
 
             if glob.on_display_side {
-                /* Only the buffers on the application side will be dirty */
+                 
                 let obj = &mut glob.objects.get_mut(&object_id).unwrap();
                 let WpExtra::WlSurface(ref mut x) = &mut obj.extra else {
                     return Err(tag!("Surface object has invalid extra type"));
@@ -1938,7 +1811,7 @@ pub fn process_way_msg(
                 if x.acquire_pt.is_some() != x.release_pt.is_some() {
                     return Err(tag!("Acquire/release points must both be set"));
                 }
-                /* These must be set every swap cycle, so take them */
+                 
                 let mut acq_pt = None;
                 let mut rel_pt = None;
                 std::mem::swap(&mut x.acquire_pt, &mut acq_pt);
@@ -1969,7 +1842,7 @@ pub fn process_way_msg(
                                     y.releases.insert((trid, pt), timeline);
                                 }
                                 if y.pending_apply_tasks == 0 {
-                                    /* All tasks completed before this was processed, so signal immediately */
+                                     
                                     debug!("Tasks already done, signalling acquires");
                                     signal_timeline_acquires(&mut y.acquires)?;
                                 }
@@ -1989,7 +1862,7 @@ pub fn process_way_msg(
             if x.acquire_pt.is_some() != x.release_pt.is_some() {
                 return Err(tag!("Acquire/release points must both be set"));
             }
-            /* These must be set every swap cycle, so take them */
+             
             let mut acq_pt = None;
             let mut rel_pt = None;
             std::mem::swap(&mut x.acquire_pt, &mut acq_pt);
@@ -1997,16 +1870,12 @@ pub fn process_way_msg(
 
             let mut current_attachment = x.damage_history[0].attachment.clone();
 
-            /* This shifts all entries of x.damage_history right by one */
-            // mutable wl_surface reference dropped; now reading from wl_buffer and wl_surface objects
+             
+             
 
             let mut found_buffer = false;
             if let Some(buf_id) = opt_buf_id {
-                /* Note: this is vulnerable to ABA-type problems when the buffer is
-                 * destroyed and a new one with the same id is recreated; however,
-                 * this is client misbehavior and Waypipe can silently ignore it,
-                 * apply extra damage to the new buffer, and let the compositor
-                 * handle it. */
+                 
                 if let Some(buf) = glob.objects.get(&buf_id) {
                     let obj = &glob.objects.get(&object_id).unwrap();
                     let WpExtra::WlSurface(ref x) = &obj.extra else {
@@ -2062,7 +1931,7 @@ pub fn process_way_msg(
                                 y.using_implicit_sync = true;
                             }
 
-                            /* todo: in theory these should still work with shm buffers */
+                             
                             if let Some((pt, timeline)) = acq_pt {
                                 y.acquires.push((pt, timeline));
                             }
@@ -2087,7 +1956,7 @@ pub fn process_way_msg(
                 }
             }
 
-            /* acquire mutable reference again */
+             
             let obj = &mut glob.objects.get_mut(&object_id).unwrap();
 
             let WpExtra::WlSurface(ref mut x) = &mut obj.extra else {
@@ -2095,9 +1964,9 @@ pub fn process_way_msg(
             };
 
             if found_buffer {
-                /* Have not yet updated properties for the current buffer attachment, so do so now */
+                 
                 x.damage_history[0].attachment = current_attachment.clone();
-                /* Rotate the damage log */
+                 
                 let mut fresh = DamageBatch {
                     attachment: current_attachment.clone(),
                     damage: Vec::new(),
@@ -2111,7 +1980,7 @@ pub fn process_way_msg(
                 x.damage_history.swap(1, 2);
                 x.damage_history.swap(0, 1);
             } else {
-                /* Null attachment (or buffer of unknown properties and size), wipe history */
+                 
                 current_attachment.buffer_uid = 0;
                 current_attachment.buffer_size = (0, 0);
                 for i in 0..7 {
@@ -2228,8 +2097,8 @@ pub fn process_way_msg(
 
             let (new_id, surf_id) = parse_req_wp_linux_drm_syncobj_manager_v1_get_surface(msg)?;
 
-            // Currently unclear how drm_syncobj interacts with wl_shm-type buffers; in theory,
-            // with GPU access to CPU memory, it _should_ be possible.
+             
+             
 
             insert_new_object(
                 &mut glob.objects,
@@ -2237,7 +2106,7 @@ pub fn process_way_msg(
                 WpObject {
                     obj_type: WaylandInterface::WpLinuxDrmSyncobjSurfaceV1,
                     extra: WpExtra::WpDrmSyncobjSurface(Box::new(ObjWpDrmSyncobjSurface {
-                        // TODO: check if ABA problem applies
+                         
                         surface: surf_id,
                     })),
                 },
@@ -2284,7 +2153,7 @@ pub fn process_way_msg(
                 WpObject {
                     obj_type: WaylandInterface::WpLinuxDrmSyncobjTimelineV1,
                     extra: WpExtra::WpDrmSyncobjTimeline(Box::new(ObjWpDrmSyncobjTimeline {
-                        // TODO: check if ABA problem applies
+                         
                         timeline: sfd,
                     })),
                 },
@@ -2323,8 +2192,8 @@ pub fn process_way_msg(
             };
             let sfd = t.timeline.clone();
 
-            // Currently unclear how drm_syncobj interacts with wl_shm-type buffers; in theory,
-            // with GPU access to CPU memory, it _should_ be possible.
+             
+             
 
             let surface_obj = glob.objects.get_mut(&surf_id).ok_or("")?;
             let WpExtra::WlSurface(ref mut surf) = &mut surface_obj.extra else {
@@ -2350,14 +2219,13 @@ pub fn process_way_msg(
                 DmabufDevice::Vulkan((_, ref vulk)) => {
                     let mod_linear = 0;
                     if !vulk.supports_format(format, mod_linear) {
-                        /* Drop message, format not supported in standard scenario (linear modifier);
-                         * and this event cannot communicate any modifiers. */
+                         
                         return Ok(ProcMsg::Done);
                     }
                 }
                 DmabufDevice::Gbm(ref gbm) => {
                     if gbm_supported_modifiers(gbm, format).is_empty() {
-                        /* Format not supported */
+                         
                         return Ok(ProcMsg::Done);
                     }
                 }
@@ -2371,7 +2239,7 @@ pub fn process_way_msg(
             let modifier = join_u64(mod_hi, mod_lo);
 
             if glob.on_display_side {
-                /* Restrict the format/modifier pairs to what this instance of Waypipe supports */
+                 
                 if !dmabuf_dev_supports_format(&glob.dmabuf_device, format, modifier) {
                     return Ok(ProcMsg::Done);
                 }
@@ -2380,7 +2248,7 @@ pub fn process_way_msg(
                 copy_msg(msg, dst);
                 Ok(ProcMsg::Done)
             } else {
-                /* For each format, replace the modifiers listed with what this instance of Waypipe accepts */
+                 
                 let WpExtra::ZwpDmabuf(d) = &mut obj.extra else {
                     panic!();
                 };
@@ -2429,22 +2297,19 @@ pub fn process_way_msg(
         }
 
         (WaylandInterface::ZwpLinuxBufferParamsV1, OPCODE_ZWP_LINUX_BUFFER_PARAMS_V1_ADD) => {
-            /* This message will be consumed and recreated later once full information has arrived;
-             * it can always be processed */
+             
 
             let (plane_idx, offset, stride, modifier_hi, modifier_lo) =
                 parse_req_zwp_linux_buffer_params_v1_add(msg)?;
             let modifier: u64 = join_u64(modifier_hi, modifier_lo);
 
             let WpExtra::ZwpDmabufParams(ref mut p) = &mut obj.extra else {
-                return Err(tag!("Incorrect extra type")); /* TODO: make a helper method for this, with standardized error ? */
+                return Err(tag!("Incorrect extra type"));  
             };
 
             match transl {
                 TranslationInfo::FromChannel((_, _)) => {
-                    /* Do nothing: the OpenDMABUF message will be sent at time of ::create or ::create_immed ;
-                     * there is no point in dequeing it earlier. Also, there will only be one message, even if
-                     * there are multiple planes. */
+                     
                 }
                 TranslationInfo::FromWayland((x, _)) => {
                     let fd = x.pop_front().ok_or_else(|| tag!("Missing fd"))?;
@@ -2467,7 +2332,7 @@ pub fn process_way_msg(
             OPCODE_ZWP_LINUX_BUFFER_PARAMS_V1_CREATE_IMMED,
         ) => {
             let WpExtra::ZwpDmabufParams(ref mut params) = &mut obj.extra else {
-                return Err(tag!("Incorrect extra type")); /* TODO: make a helper method for this, with standardized error ? */
+                return Err(tag!("Incorrect extra type"));  
             };
 
             let (buffer_id, width, height, drm_format, flags) =
@@ -2518,10 +2383,9 @@ pub fn process_way_msg(
                     sfd
                 }
                 TranslationInfo::FromWayland((_, y)) => {
-                    /* Finally process all the SFDs, introduce add messages */
+                     
                     let estimated_msg_len = length_req_zwp_linux_buffer_params_v1_add()
-                    /* send add messages as-if the buffer were actually linear,
-                     * for improved compatibility with older Waypipe */
+                     
                     + length_req_zwp_linux_buffer_params_v1_create_immed();
                     check_space!(estimated_msg_len, params.planes.len(), remaining_space);
 
@@ -2541,24 +2405,22 @@ pub fn process_way_msg(
                     )?;
                     y.push(sfd.clone());
 
-                    /* Recreate all the 'add' messages at once. While this is technically pointless when Waypipe runs against itself,
-                     * since those add messages get ignored and dropped, older versions may care. */
+                     
                     let mod_linear: u64 = 0;
-                    /* Assuming format is single planar, instruct other end to create a linear buffer;
-                     * older Waypipe will do this, and newer will ignore it. */
+                     
                     let (mod_hi, mod_lo) = split_u64(mod_linear);
 
                     let wayl_format = drm_to_wayland(drm_format);
-                    // TODO: this will need to change for multiplanar or packed formats
+                     
                     let bpp = get_shm_format_layout(wayl_format).unwrap().planes[0].bpt;
 
                     write_req_zwp_linux_buffer_params_v1_add(
                         dst,
                         object_id,
                         true,
-                        /* plane idx */ 0,
-                        /* offset */ 0,
-                        bpp.get().checked_mul(width).unwrap(), // stride as if tightly packed
+                          0,
+                          0,
+                        bpp.get().checked_mul(width).unwrap(),  
                         mod_hi,
                         mod_lo,
                     );
@@ -2594,7 +2456,7 @@ pub fn process_way_msg(
         }
         (WaylandInterface::ZwpLinuxBufferParamsV1, OPCODE_ZWP_LINUX_BUFFER_PARAMS_V1_CREATE) => {
             let WpExtra::ZwpDmabufParams(ref mut params) = &mut obj.extra else {
-                return Err(tag!("Incorrect extra type")); /* TODO: make a helper method for this, with standardized error ? */
+                return Err(tag!("Incorrect extra type"));  
             };
             if params.dmabuf.is_some() {
                 return Err(tag!("Can only create dmabuf from params once"));
@@ -2641,10 +2503,9 @@ pub fn process_way_msg(
                     sfd
                 }
                 TranslationInfo::FromWayland((_, y)) => {
-                    /* Finally process all the SFDs, introduce add messages */
+                     
                     let estimated_msg_len = length_req_zwp_linux_buffer_params_v1_add()
-                    /* send add messages as-if the buffer were actually linear,
-                     * for improved compatibility with older Waypipe */
+                     
                     + length_req_zwp_linux_buffer_params_v1_create_immed();
                     check_space!(estimated_msg_len, params.planes.len(), remaining_space);
 
@@ -2664,24 +2525,22 @@ pub fn process_way_msg(
                     )?;
                     y.push(sfd.clone());
 
-                    /* Recreate all the 'add' messages at once. While this is technically pointless when Waypipe runs against itself,
-                     * since those add messages get ignored and dropped, older versions may care. */
+                     
                     let mod_linear: u64 = 0;
-                    /* Assuming format is single planar, instruct other end to create a linear buffer;
-                     * older Waypipe will do this, and newer will ignore it. */
+                     
                     let (mod_hi, mod_lo) = split_u64(mod_linear);
 
                     let wayl_format = drm_to_wayland(drm_format);
-                    // TODO: update for multiplanar/complicated pixel formats
+                     
                     let bpp = get_shm_format_layout(wayl_format).unwrap().planes[0].bpt;
 
                     write_req_zwp_linux_buffer_params_v1_add(
                         dst,
                         object_id,
                         true,
-                        /* plane idx */ 0,
-                        /* offset */ 0,
-                        bpp.get().checked_mul(width).unwrap(), // stride as if tightly packed
+                          0,
+                          0,
+                        bpp.get().checked_mul(width).unwrap(),  
                         mod_hi,
                         mod_lo,
                     );
@@ -2704,7 +2563,7 @@ pub fn process_way_msg(
             check_space!(msg.len(), 0, remaining_space);
             copy_msg(msg, dst);
 
-            /* Discard reference to dmabuf now; compositor rejected it */
+             
             let WpExtra::ZwpDmabufParams(ref mut params) = &mut obj.extra else {
                 return Err(tag!("Incorrect extra type"));
             };
@@ -2798,7 +2657,7 @@ pub fn process_way_msg(
                 return Err(tag!("Expected object to have dmabuf_feedback data"));
             };
 
-            /* Load the format table */
+             
             let mut table_data = vec![0; table_size as usize];
             match transl {
                 TranslationInfo::FromChannel((x, _)) => {
@@ -2911,7 +2770,7 @@ pub fn process_way_msg(
                         table.len()
                     ));
                 };
-                /* On display side, immediately filter out unsupported format-modifier pairs. */
+                 
                 if glob.on_display_side
                     && !dmabuf_dev_supports_format(&glob.dmabuf_device, pair.0, pair.1)
                 {
@@ -2947,7 +2806,7 @@ pub fn process_way_msg(
             let dev_len = write_dev_array(0).len();
 
             if !feedback.processed {
-                /* Process feedback now, to determine how much space is needed for it. */
+                 
                 feedback.processed = true;
 
                 if !glob.on_display_side {
@@ -2955,11 +2814,8 @@ pub fn process_way_msg(
                 }
                 let new_table = process_dmabuf_feedback(feedback)?;
                 if Some(&new_table) != feedback.output_format_table.as_ref() {
-                    // Table has changed; send new fd
-                    let local_fd = memfd::memfd_create(
-                        c"/waypipe",
-                        memfd::MFdFlags::MFD_CLOEXEC | memfd::MFdFlags::MFD_ALLOW_SEALING,
-                    )
+                     
+                    let local_fd = crate::util::create_anon_file()
                     .map_err(|x| tag!("Failed to create memfd: {:?}", x))?;
                     let sz: u32 = new_table.len().try_into().unwrap();
                     assert!(sz > 0);
@@ -2994,7 +2850,7 @@ pub fn process_way_msg(
             space_est += length_evt_zwp_linux_dmabuf_feedback_v1_main_device(dev_len);
             space_est += length_evt_zwp_linux_dmabuf_feedback_v1_done();
 
-            /* note: this is now using the _converted_ tranche lengths and counts */
+             
             for t in feedback.tranches.iter() {
                 space_est += length_evt_zwp_linux_dmabuf_feedback_v1_tranche_done()
                     + length_evt_zwp_linux_dmabuf_feedback_v1_tranche_flags()
@@ -3031,7 +2887,7 @@ pub fn process_way_msg(
                 }
             }
 
-            /* Write messages, filtering as necessary. */
+             
             let dev_id = dmabuf_dev_get_id(&glob.dmabuf_device);
             write_evt_zwp_linux_dmabuf_feedback_v1_main_device(
                 dst,
@@ -3057,10 +2913,10 @@ pub fn process_way_msg(
             }
             write_evt_zwp_linux_dmabuf_feedback_v1_done(dst, object_id);
 
-            /* Reset state for next batch */
+             
             feedback.processed = false;
             feedback.tranches = Vec::new();
-            // note: `feedback.current` _should_ already be reset in _tranche_done
+             
             feedback.current = DmabufTranche {
                 flags: 0,
                 values: Vec::new(),
@@ -3101,11 +2957,11 @@ pub fn process_way_msg(
         ) => {
             check_space!(msg.len(), 1, remaining_space);
 
-            // TODO: only damage the portion of the file between 'offset' and 'offset+length'.
-            // Or, to save remote resources: reduce the offset to zero and have Waypipe
-            // convert between coordinates.
-            // Also: mmap is not required to be supported, only seek+read, so this file may
-            // need different handling anyway.
+             
+             
+             
+             
+             
             let (offset, length) = parse_req_wp_image_description_creator_icc_v1_set_icc_file(msg)?;
             if length == 0 {
                 return Err(tag!("File length for wp_image_description_creator_icc_v1::set_icc_file should not be zero"));
@@ -3218,8 +3074,7 @@ pub fn process_way_msg(
         | (WaylandInterface::WlDataOffer, OPCODE_WL_DATA_OFFER_RECEIVE) => {
             check_space!(msg.len(), 1, remaining_space);
 
-            /* Message format is mimetype + fd, and the mimetype doesn't matter
-             * for Waypipe */
+             
 
             match transl {
                 TranslationInfo::FromChannel((x, y)) => {
@@ -3230,7 +3085,7 @@ pub fn process_way_msg(
                     let v = translate_pipe_fd(
                         x.pop_front().ok_or_else(|| tag!("Missing fd"))?,
                         glob,
-                        true, // reading from channel
+                        true,  
                     )?;
                     y.push(v);
                 }
@@ -3347,7 +3202,7 @@ pub fn process_way_msg(
                 .ok_or_else(|| tag!("Unexpected size for dev_t: {}", dev.len()))?;
             session.dmabuf_device = Some(main_device);
 
-            /* Drop message; will be recreated when ::done arrives */
+             
             Ok(ProcMsg::Done)
         }
         (
@@ -3370,7 +3225,7 @@ pub fn process_way_msg(
             if !mod_list.is_empty() {
                 session.dmabuf_formats.push((fmt, mod_list));
             }
-            /* Drop message; will be recreated when ::done arrives */
+             
             Ok(ProcMsg::Done)
         }
 
@@ -3378,7 +3233,7 @@ pub fn process_way_msg(
             WaylandInterface::ExtImageCopyCaptureSessionV1,
             OPCODE_EXT_IMAGE_COPY_CAPTURE_SESSION_V1_DONE,
         ) => {
-            /* Replay messages */
+             
             let WpExtra::ExtImageCopyCaptureSession(ref mut session) = obj.extra else {
                 unreachable!();
             };
@@ -3389,7 +3244,7 @@ pub fn process_way_msg(
                     glob.dmabuf_device,
                     DmabufDevice::Unknown | DmabufDevice::VulkanSetup(_)
                 ) {
-                    /* Identify which device to use, if needed */
+                     
                     if glob.on_display_side {
                         Some(main_device)
                     } else if let Some(node) = &glob.opts.drm_node {
@@ -3418,7 +3273,7 @@ pub fn process_way_msg(
                 }
                 let current_device_id = dmabuf_dev_get_id(&glob.dmabuf_device);
                 if glob.on_display_side && main_device != current_device_id {
-                    // todo: handle this case
+                     
                     return Err(tag!("image copy device did not match existing device; multiple devices are not yet supported"));
                 }
 
@@ -3456,7 +3311,7 @@ pub fn process_way_msg(
                 for (fmt, mod_list) in session.dmabuf_formats.iter() {
                     let mut output = Vec::new();
                     if glob.on_display_side {
-                        /* Filter list of available modifiers */
+                         
                         for m in mod_list.iter() {
                             if dmabuf_dev_supports_format(&glob.dmabuf_device, *fmt, *m) {
                                 output.extend_from_slice(&u64::to_le_bytes(*m));
@@ -3468,7 +3323,7 @@ pub fn process_way_msg(
                             }
                         }
                     } else {
-                        /* Replace modifier list with what is available locally */
+                         
                         let local_mods = dmabuf_dev_modifier_list(&glob.dmabuf_device, *fmt);
                         add_advertised_modifiers(&mut glob.advertised_modifiers, *fmt, local_mods);
                         for m in local_mods {
@@ -3503,9 +3358,7 @@ pub fn process_way_msg(
             }
             write_evt_ext_image_copy_capture_session_v1_done(dst, object_id);
 
-            /* Reset state: formats do not persist between ::done calls, because
-             * ext_image_copy_capture_session_v1 has no event to remove a format;
-             * presumably the dmabuf_device behaves similarly. */
+             
             session.dmabuf_device = None;
             session.dmabuf_formats = Vec::new();
             Ok(ProcMsg::Done)
@@ -3690,9 +3543,7 @@ pub fn process_way_msg(
                 let WpExtra::ExtImageCopyCaptureFrame(ref frame) = obj.extra else {
                     unreachable!();
                 };
-                /* Warn if the buffer being submitted does not have a format/modifier pair in the
-                 * buffer constraints list; Waypipe currently does not have a mechanism to reliably
-                 * ensure this occurs. */
+                 
                 let fmtmod = if let Some(ref buffer) = frame.buffer {
                     let b = buffer.0.borrow();
                     if let ShadowFdVariant::Dmabuf(ref d) = b.data {
@@ -3741,7 +3592,7 @@ pub fn process_way_msg(
                 let apply_count = if let ShadowFdVariant::File(data) = &b.data {
                     data.pending_apply_tasks
                 } else if let ShadowFdVariant::Dmabuf(data) = &b.data {
-                    /* Assuming no timelines for screencopy-frame-v1 */
+                     
                     data.pending_apply_tasks
                 } else {
                     return Err(tag!("Attached buffer is not of file or dmabuf type"));
@@ -3771,7 +3622,7 @@ pub fn process_way_msg(
             }
 
             if glob.on_display_side {
-                /* Mark damage */
+                 
 
                 let mut sfd = sfd.borrow_mut();
                 if let ShadowFdVariant::File(ref mut y) = &mut sfd.data {
@@ -3819,7 +3670,7 @@ pub fn process_way_msg(
             WaylandInterface::ExtImageCopyCaptureFrameV1,
             OPCODE_EXT_IMAGE_COPY_CAPTURE_FRAME_V1_READY,
         ) => {
-            // TODO: deduplicate with wlr_screencopy_frame_v1::ready
+             
             check_space!(msg.len(), 0, remaining_space);
             let WpExtra::ExtImageCopyCaptureFrame(ref mut frame) = obj.extra else {
                 unreachable!();
@@ -3836,7 +3687,7 @@ pub fn process_way_msg(
                 let apply_count = if let ShadowFdVariant::File(data) = &b.data {
                     data.pending_apply_tasks
                 } else if let ShadowFdVariant::Dmabuf(data) = &b.data {
-                    /* Assuming no timelines for screencopy-frame-v1 */
+                     
                     data.pending_apply_tasks
                 } else {
                     return Err(tag!("Attached buffer is not of file or dmabuf type"));
@@ -3856,7 +3707,7 @@ pub fn process_way_msg(
             }
 
             if glob.on_display_side {
-                /* Mark damage */
+                 
 
                 let mut sfd = sfd.borrow_mut();
                 if let ShadowFdVariant::File(ref mut y) = &mut sfd.data {
@@ -3906,8 +3757,8 @@ pub fn process_way_msg(
             let space_needed = length_req_xdg_toplevel_set_title(title.len() + prefix.len());
             check_space!(space_needed, 0, remaining_space);
 
-            // TODO: direct manipulation is appropriate here, because the output
-            // already provides the necessary space
+             
+             
             let mut concat: Vec<u8> = Vec::new();
             concat.extend_from_slice(prefix);
             concat.extend_from_slice(title);
@@ -3928,10 +3779,10 @@ pub fn process_way_msg(
                 return Err(tag!("Expected wl_buffer object"));
             };
 
-            /* This request makes the current buffer contents available to the compositor. */
+             
             if glob.on_display_side {
                 let b = extra.sfd.borrow();
-                // Only wl_shm buffers are allowed for xdg_toplevel_icon_v1::add_buffer
+                 
                 let apply_count = if let ShadowFdVariant::File(data) = &b.data {
                     data.pending_apply_tasks
                 } else {
@@ -3945,7 +3796,7 @@ pub fn process_way_msg(
             copy_msg(msg, dst);
 
             if !glob.on_display_side {
-                /* Mark entire buffer as damaged */
+                 
                 let mut sfd = extra.sfd.borrow_mut();
                 if let ShadowFdVariant::File(ref mut y) = &mut sfd.data {
                     let damage_interval =
@@ -3996,9 +3847,9 @@ pub fn process_way_msg(
                     ));
                 }
             }
-            // note: in theory, `waypipe server` could choose a preferred clock of its
-            // own (like CLOCK_REALTIME or CLOCK_TAI) to reduce the number of clock
-            // conversions.
+             
+             
+             
             glob.presentation_clock = Some(clock_id);
             copy_msg(msg, dst);
             Ok(ProcMsg::Done)
@@ -4025,21 +3876,19 @@ pub fn process_way_msg(
             Ok(ProcMsg::Done)
         }
         (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_GLOBAL) => {
-            // filter out events
+             
             let (name, intf, mut version) = parse_evt_wl_registry_global(msg)?;
 
-            /* Note: nothing that gets filtered out should ever be removed,
-             * so it is not necessary to track interface name codes for global_remove */
+             
             let blacklist: &'static [&'static [u8]] = &[
-                b"wl_drm", /* very old/deprecated API: linux-dmabuf-v4 replaces */
+                b"wl_drm",  
                 b"wp_drm_lease_device_v1",
                 b"zwlr_export_dmabuf_manager_v1",
-                b"zwp_linux_explicit_synchronization_v1", // outdated, uses fences instead of timelines
-                b"wp_security_context_manager_v1",        // sends socket listen fd over network
+                b"zwp_linux_explicit_synchronization_v1",  
+                b"wp_security_context_manager_v1",         
             ];
 
-            /* Limit the version of the following protocols to what Waypipe has compiled
-             * in, because future versions are very likely to require additional handling. */
+             
             let intf_code = match intf {
                 WL_SHM => Some(WaylandInterface::WlShm),
                 ZWP_LINUX_DMABUF_V1 => Some(WaylandInterface::ZwpLinuxDmabufV1),
@@ -4066,26 +3915,24 @@ pub fn process_way_msg(
                 }
             }
             if blacklist.contains(&intf) {
-                /* Drop interface entirely */
+                 
                 debug!("Dropping interface: {}", EscapeWlName(intf));
                 return Ok(ProcMsg::Done);
             }
 
             if intf == ZWP_LINUX_DMABUF_V1 {
-                /* waypipe-server side: Filter out dmabuf support if the target device (or _any_ device)
-                 * is not available; this must be done now to prevent advertising this global when
-                 * DMABUF support is not actually available. */
+                 
                 match glob.dmabuf_device {
-                    DmabufDevice::Unavailable => (), /* case handled later */
+                    DmabufDevice::Unavailable => (),  
                     DmabufDevice::Vulkan(_) | DmabufDevice::Gbm(_) => (),
                     DmabufDevice::VulkanSetup(_) => (),
                     DmabufDevice::Unknown => {
                         if !glob.on_display_side {
                             let dev = if let Some(node) = &glob.opts.drm_node {
-                                /* Pick specified device */
+                                 
                                 Some(get_dev_for_drm_node_path(node)?)
                             } else {
-                                /* Pick best device */
+                                 
                                 None
                             };
                             glob.dmabuf_device = try_setup_dmabuf_instance_light(&glob.opts, dev)?;
@@ -4101,20 +3948,19 @@ pub fn process_way_msg(
                     return Ok(ProcMsg::Done);
                 }
 
-                /* note: with versions < 4, the the compositor has no way to specify the preferred
-                 * drm node, so it may be chosen arbitrarily */
+                 
             }
             if intf == WP_LINUX_DRM_SYNCOBJ_MANAGER_V1 {
                 match &glob.dmabuf_device {
                     DmabufDevice::Unknown => {
-                        /* store globals for replay later */
+                         
                         let WpExtra::WlRegistry(ref mut reg) = obj.extra else {
                             return Err(tag!("Unexpected extra type for wl_registry"));
                         };
                         reg.syncobj_manager_replay.push((name, version));
                     }
                     DmabufDevice::Gbm(_) | DmabufDevice::Unavailable => {
-                        /* drop, not supported */
+                         
                         debug!(
                             "No timeline semaphore handling device available: Dropping interface: {}",
                             EscapeWlName(intf)
@@ -4136,7 +3982,7 @@ pub fn process_way_msg(
                         }
                     }
                     DmabufDevice::Vulkan((_, vulk)) => {
-                        /* Keep if timeline semaphores supported */
+                         
                         if !vulk.supports_timeline_import_export() {
                             debug!(
                                 "Timeline semaphore import/export is not supported: Dropping interface: {}",
@@ -4163,12 +4009,12 @@ pub fn process_way_msg(
             write_evt_wl_registry_global(dst, object_id, name, intf, version);
 
             if intf == ZWP_LINUX_DMABUF_V1 {
-                /* Replay syncobj manager events once it is certain Vulkan is available. */
+                 
                 let WpExtra::WlRegistry(ref mut reg) = obj.extra else {
                     return Err(tag!("Unexpected extra type for wl_registry"));
                 };
                 let timelines_supported = match &glob.dmabuf_device {
-                    /* Assume true since, once set up, Waypipe will most likely support drm syncobj iff the compositor does */
+                     
                     DmabufDevice::VulkanSetup(_) => true,
                     DmabufDevice::Unknown => {
                         if glob.on_display_side {
@@ -4205,21 +4051,20 @@ pub fn process_way_msg(
             Ok(ProcMsg::Done)
         }
         (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_BIND) => {
-            // filter out events
+             
             let (_id, name, version, oid) = parse_req_wl_registry_bind(msg)?;
             if name == ZWP_LINUX_DMABUF_V1 {
                 let light_setup = version >= 4 && glob.on_display_side;
                 if matches!(glob.dmabuf_device, DmabufDevice::Unknown) {
                     let dev = if let Some(node) = &glob.opts.drm_node {
-                        /* Pick specified device */
+                         
                         Some(get_dev_for_drm_node_path(node)?)
                     } else {
-                        /* Pick best device */
+                         
                         None
                     };
                     if light_setup {
-                        /* In this case, device will be provided later through dmabuf-feedback
-                         * main_device event */
+                         
                         glob.dmabuf_device = try_setup_dmabuf_instance_light(&glob.opts, dev)?;
                     } else {
                         debug!(
@@ -4257,23 +4102,18 @@ pub fn process_way_msg(
                 return Ok(ProcMsg::Done);
             }
 
-            /* create new global objects */
+             
             default_proc_way_msg(msg, dst, meth, is_req, object_id, glob)
         }
 
         _ => {
-            // Default handling: copy message, and create IDs
+             
             default_proc_way_msg(msg, dst, meth, is_req, object_id, glob)
         }
     }
 }
 
-/** Log the _changed_ messages in the given buffer whose corresponding object is
- * currently in the provided set of objects.
- *
- * To avoid issues resulting from object deletion, this should be called
- * promptly after processing a message and producing `output_msgs`.
- */
+ 
 pub fn log_way_msg_output(
     orig_msg: &[u8],
     mut output_msgs: &[u8],
@@ -4289,11 +4129,11 @@ pub fn log_way_msg_output(
         return;
     }
     if orig_msg[0..4] == output_msgs[0..4] && orig_msg[8..] == output_msgs[8..] {
-        /* No change, only message was copied as is, modulo fd tagging changes */
+         
         return;
     }
 
-    /* Output messages should be well formed. */
+     
     while !output_msgs.is_empty() {
         let object_id = ObjId(u32::from_le_bytes(output_msgs[0..4].try_into().unwrap()));
         let header2 = u32::from_le_bytes(output_msgs[4..8].try_into().unwrap());
@@ -4303,7 +4143,7 @@ pub fn log_way_msg_output(
         output_msgs = &output_msgs[length..];
 
         let Some(obj) = objects.get(&object_id) else {
-            /* Unknown messages will always be copied, so no point in logging them again */
+             
             continue;
         };
 
@@ -4313,7 +4153,7 @@ pub fn log_way_msg_output(
             INTERFACE_TABLE[obj.obj_type as usize].evts.get(opcode)
         };
         let Some(meth) = opt_meth else {
-            /* Method out of range, will be copied */
+             
             continue;
         };
         debug!(
@@ -4327,7 +4167,7 @@ pub fn log_way_msg_output(
     }
 }
 
-/** Construct the Wayland object map with the initial object, wl_display#1 */
+ 
 pub fn setup_object_map() -> BTreeMap<ObjId, WpObject> {
     let mut map = BTreeMap::new();
     map.insert(

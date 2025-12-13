@@ -1,11 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! DMABUF handling with libgbm; should only be used if Vulkan is not available.
- *
- * To maximize compatibility, newer features and optimizations should be avoided.
- * It is very hard to test them fully without having a variety of old hardware and
- * library versions. To be safe, libgbm functions should only ever be called on
- * the main thread, and mapped memory only accessed from a single thread.
- */
+ 
+ 
 #![cfg(feature = "gbmfallback")]
 use crate::tag;
 use crate::util::*;
@@ -18,26 +12,20 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
 use waypipe_gbm_wrapper::*;
 
-/** A GBM device for a render node, and associated information */
+ 
 pub struct GBMDevice {
     device: *mut gbm_device,
     bindings: gbm,
     device_id: u64,
-    /** Keep the render node fd alive, as the gbm device appears to refer to it. */
+     
     _drm_fd: OwnedFd,
-    /** Cache listing all available modifiers. Modifiers are typically requested for
-     * use by protocol editing code for dmabuf-feedback and so if a request for one format
-     * is made, usually requests for the other formats will follow. Mesa typically supports,
-     * and compositors advertise, about half of the options in [GBM_SUPPORTED_FORMATS], so
-     * the overhead of checking for all possible formats is not very large. If individual
-     * format queries become expensive, BTreeMap<u32, OnceCell<Box<[u64]>>> can be used. */
+     
     supported_modifiers: OnceCell<BTreeMap<u32, Box<[u64]>>>,
 }
 
-/** A type corresponding to a DMABUF object */
+ 
 pub struct GBMDmabuf {
-    /** Reference to keep device alive at least as long as the gbm_bo; the documention does
-     * not state that this is necessary, but it also does not state that it isn't. */
+     
     device: Rc<GBMDevice>,
     bo: *mut gbm_bo,
     pub width: u32,
@@ -63,20 +51,14 @@ impl Drop for GBMDmabuf {
 const LINEAR_MODIFIER: u64 = 0;
 const INVALID_MODIFIER: u64 = 0x00ffffffffffffff;
 
-/** Submitting overly large dimensions can make libgbm (or at least, some older version of it)
- * crash, and libgbm does not expose buffer size limits; so set an arbitrary limit which is well under
- * u16::MAX. */
+ 
 const MAX_DIMENSION: u32 = 16384;
 
-/** List of formats GBM can support which are RGB, single-plane, and have a possible linear layout. */
+ 
 const GBM_SUPPORTED_FORMATS: &[u32] = &[
-    /* Note: GBM also accepts 0=GBM_BO_FORMAT_XRGB8888 and 1=GBM_BO_FORMAT_ARGB8888,
-     * but these are not valid DRM format codes. (Note: in an unfortunate coincidence,
-     * wl_shm::format::argb8888 is 0 and wl_shm::format::xrgb8888 is 1; but this should
-     * not matter because wl_shm format codes should never be passed to libgbm.)
-     */
-    fourcc('A', 'R', '2', '4'), // Argb8888
-    fourcc('X', 'R', '2', '4'), // Xrgb8888
+     
+    fourcc('A', 'R', '2', '4'),  
+    fourcc('X', 'R', '2', '4'),  
     WlShmFormat::Rgb332 as u32,
     WlShmFormat::Bgr233 as u32,
     WlShmFormat::Xrgb4444 as u32,
@@ -156,7 +138,7 @@ fn get_bpp_if_rgb_planar(fmt: u32) -> Option<u32> {
     }
 }
 
-/** Create a GBMDevice, if one with the specified device id exists */
+ 
 pub fn setup_gbm_device(device: Option<u64>) -> Result<Option<Rc<GBMDevice>>, String> {
     let mut id_list = if let Some(d) = device {
         vec![d]
@@ -201,7 +183,7 @@ pub fn setup_gbm_device(device: Option<u64>) -> Result<Option<Rc<GBMDevice>>, St
     Ok(None)
 }
 
-/** Import a dmabuf. */
+ 
 pub fn gbm_import_dmabuf(
     device: &Rc<GBMDevice>,
     mut planes: Vec<AddDmabufPlane>,
@@ -260,7 +242,7 @@ pub fn gbm_import_dmabuf(
             &mut data as *mut gbm_import_fd_data as *mut c_void,
             flags,
         );
-        /* Keep the fd alive until after the import. */
+         
         drop(plane);
         if bo.is_null() {
             return Err(tag!(
@@ -280,7 +262,7 @@ pub fn gbm_import_dmabuf(
     }
 }
 
-/** Create a dmabuf with the specified properties and a modifier chosen from the list, if possible. */
+ 
 pub fn gbm_create_dmabuf(
     device: &Rc<GBMDevice>,
     width: u32,
@@ -341,7 +323,7 @@ pub fn gbm_create_dmabuf(
             x => OwnedFd::from_raw_fd(x),
         };
 
-        /* No failure mechanism is documented */
+         
         let stride = (device.bindings.gbm_bo_get_stride)(bo);
         Ok((
             GBMDmabuf {
@@ -354,8 +336,7 @@ pub fn gbm_create_dmabuf(
             vec![AddDmabufPlane {
                 fd,
                 plane_idx: 0,
-                /* gbm_bo_get_offset was added in 2016 and appears to be used only for plane indices;
-                 */
+                 
                 offset: 0,
                 stride,
                 modifier: actual_mod,
@@ -369,10 +350,7 @@ enum MapType {
     WriteAll,
 }
 
-/** Map a dmabuf using gbm's API.
- *
- * It is unclear how safe multi-threaded access to buffers.
- */
+ 
 unsafe fn map_dmabuf(
     bindings: &gbm,
     bo: *mut gbm_bo,
@@ -380,15 +358,9 @@ unsafe fn map_dmabuf(
     height: u32,
     map: MapType,
 ) -> Result<(*mut u8, u32, *mut c_void), String> {
-    /* With i965, the map handle MUST initially point to a NULL pointer; otherwise
-     * the handler may silently exit, sometimes with misleading errno :-( */
+     
     let mut map_handle: *mut c_void = std::ptr::null_mut();
-    /* As of 2022, with amdgpu, GBM_BO_TRANSFER_WRITE invalidates
-     * regions not written to during the mapping, while iris preserves
-     * the original buffer contents. GBM documentation does not say which
-     * WRITE behavior is correct. What the individual drivers do may change
-     * in the future. Specifying READ_WRITE preserves the old contents with
-     * both drivers. */
+     
     let flags = match map {
         MapType::Read => gbm_bo_transfer_flags_GBM_BO_TRANSFER_READ,
         MapType::WriteAll => gbm_bo_transfer_flags_GBM_BO_TRANSFER_WRITE,
@@ -414,8 +386,7 @@ fn stride_adjusted_copy(dst: &mut [u8], dst_stride: u32, src: &[u8], src_stride:
 }
 
 impl GBMDmabuf {
-    /** Copy out the entire contents of the dmabuf onto an array (which is either densely
-     * packed or uses the nominal stride. */
+     
     pub fn copy_from_dmabuf(
         &mut self,
         view_row_stride: Option<u32>,
@@ -451,7 +422,7 @@ impl GBMDmabuf {
 
         Ok(())
     }
-    /** Copy data onto the dmabuf. */
+     
     pub fn copy_onto_dmabuf(
         &mut self,
         view_row_stride: Option<u32>,
@@ -488,7 +459,7 @@ impl GBMDmabuf {
         Ok(())
     }
 
-    // TODO: deduplicate with Vulkan
+     
     pub fn nominal_size(&self, view_row_length: Option<u32>) -> usize {
         if let Some(r) = view_row_length {
             (self.height * r) as usize
@@ -503,12 +474,11 @@ impl GBMDmabuf {
     }
 }
 
-/** Build table to identify which formats and modifiers are supported. */
+ 
 fn gbm_build_modifier_table(device: &Rc<GBMDevice>) -> &BTreeMap<u32, Box<[u64]>> {
     device.supported_modifiers.get_or_init(|| {
         let mut supported_modifiers = BTreeMap::new();
-        /* Identify which modifiers are available at startup. In practice, this is not
-         * too expensive compared to initializing gbm itself */
+         
         for format in GBM_SUPPORTED_FORMATS {
             let mut mods = Vec::new();
 
@@ -538,13 +508,7 @@ fn gbm_build_modifier_table(device: &Rc<GBMDevice>) -> &BTreeMap<u32, Box<[u64]>
     })
 }
 
-/** Return supported GBM modifiers for a format, or empty list if format not supported.
- *
- * Restrict to known single-plane RGB-type formats, and to LINEAR or INVALID modifiers.
- * Other modifiers are not supported, because a) they may require auxiliary control planes
- * or other features which are awkward or impossible to use in all versions of libgbm; b)
- * performance can be terrible (using e.g. Strong Uncacheable mappings that forbid pipelining
- * or caching read/write operations). */
+ 
 pub fn gbm_supported_modifiers(device: &Rc<GBMDevice>, format: u32) -> &[u64] {
     let table = gbm_build_modifier_table(device);
     if let Some(mods) = table.get(&format) {
@@ -553,7 +517,7 @@ pub fn gbm_supported_modifiers(device: &Rc<GBMDevice>, format: u32) -> &[u64] {
         &[]
     }
 }
-/** Get the dev_t identifying the device. */
+ 
 pub fn gbm_get_device_id(device: &Rc<GBMDevice>) -> u64 {
     device.device_id
 }

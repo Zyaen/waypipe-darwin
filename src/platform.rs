@@ -1,27 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Platform-specific code.
- *
- * For platforms where Rust's `struct stat` is inaccurate, the key parameters can be
- * acquired using the following C script, to be compiled using `clang -std=c11`.
- *
- * ```
- * #include <stdio.h>
- * #include <stddef.h>
- * #include <stdalign.h>
- * #include <sys/types.h> // for dev_t
- * #include <sys/stat.h> // for struct stat
- *
- * int main(int argc, char **argv) {
- *     (void)argc;
- *     (void)argv;
- *     printf("sizeof(dev_t) %zu\n", sizeof(dev_t));
- *     printf("alignof(dev_t) %zu\n", alignof(dev_t));
- *     printf("sizeof(struct stat) %zu\n", sizeof(struct stat));
- *     printf("alignof(struct stat) %zu\n", alignof(struct stat));
- *     printf("offsetof(struct stat, st_rdev) %zu\n", offsetof(struct stat, st_rdev));
- * }
- * ```
- */
+ 
+ 
 
 use std::path::Path;
 
@@ -53,9 +31,7 @@ fn get_rdev_for_file_freebsd(path: &Path) -> Option<u64> {
 
     let mut output: FreeBSDStat = FreeBSDStat([0; SIZEOF_FREEBSD_STAT]);
     let ret: i32 = unsafe {
-        /* SAFETY: requires FreeBSD >= 12.0 for the definition of the function
-         * and struct stat to be correct. `stat()` does not hold onto references
-         * to its input so there is no lifetime issue. */
+         
         stat(path_str.as_ptr(), &mut output)
     };
     if ret != 0 {
@@ -71,13 +47,12 @@ fn get_rdev_for_file_base(path: &Path) -> Option<u64> {
     use nix::sys::stat;
 
     let result = stat::stat(path).ok()?;
-    /* st_rdev size varies by platform and may be 4 on old
-     * architectures, but is typically 8 and always <= 8 */
+     
     #[allow(clippy::useless_conversion)]
-    Some(result.st_rdev.into())
+    Some(result.st_rdev as u64)
 }
 
-/** Get the (`st_rdev`) device id for the special file at `path`, cast to a u64. */
+ 
 pub fn get_rdev_for_file(path: &Path) -> Option<u64> {
     #[cfg(target_os = "freebsd")]
     {

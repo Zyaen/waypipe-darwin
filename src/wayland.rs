@@ -1,10 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Types and basic parsing/writing code for Wayland protocol */
+ 
+ 
 use crate::wayland_gen::{WaylandInterface, INTERFACE_TABLE};
 
 pub const PARSE_ERROR: &str = "Failed to parse message";
 
-/* Wayland object Id. The null object 0 is not special cased and may require checking. */
+ 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
 #[repr(transparent)]
 pub struct ObjId(pub u32);
@@ -32,14 +32,14 @@ pub struct WaylandMethod {
     pub sig: &'static [WaylandArgument],
     pub destructor: bool,
 }
-// TODO: memory layout optimizations. As with the C implementation, could
-// compact this data a lot by merging all these arrays into a single table,
-// and using indices into it
-// In particular: unify the event/req tables, by making them use an index
-// into a global table, placing events at coordinates x+0,x+1,x+2..., and placing
-// requests at coordinates x-1,x-2,x-3...
+ 
+ 
+ 
+ 
+ 
+ 
 
-/** Data for a Wayland interface. */
+ 
 pub struct WaylandData {
     pub name: &'static str,
     pub evts: &'static [WaylandMethod],
@@ -90,11 +90,11 @@ pub fn parse_wl_header(msg: &[u8]) -> (ObjId, usize, u8) {
 }
 pub fn parse_string<'a>(msg_tail: &mut &'a [u8]) -> Result<Option<&'a [u8]>, &'static str> {
     let v = parse_array(msg_tail)?;
-    // Null values for Wayland strings are encoded with empty arrays
+     
     if v.is_empty() {
         Ok(None)
     } else {
-        // drop null terminator
+         
         Ok(Some(&v[..v.len() - 1]))
     }
 }
@@ -103,7 +103,7 @@ pub fn parse_array<'a>(msg_tail: &mut &'a [u8]) -> Result<&'a [u8], &'static str
         return Err(PARSE_ERROR);
     }
     let length = u32::from_le_bytes(msg_tail[..4].try_into().unwrap()) as usize;
-    // length includes null terminator, if string
+     
     let space = length.checked_next_multiple_of(4).ok_or(PARSE_ERROR)?;
     if space > msg_tail.len() - 4 {
         return Err(PARSE_ERROR);

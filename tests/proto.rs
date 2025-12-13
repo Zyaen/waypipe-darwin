@@ -1,11 +1,11 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-/*! Protocol tests using the `test_proto` test runner */
+ 
+ 
 #![cfg(feature = "test_proto")]
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::process::{Command, ExitCode, Stdio};
 
-/** Run the named test, print its output, and return an appropriate exit code */
+ 
 fn do_test(name: &str) -> ExitCode {
     let waypipe_bin = env!("CARGO_BIN_EXE_waypipe");
     let test_proto_bin = env!("CARGO_BIN_EXE_test_proto");
@@ -13,7 +13,7 @@ fn do_test(name: &str) -> ExitCode {
     let cross_runner = std::env::var_os("CROSS_TARGET_RUNNER");
     let mut args: Vec<&OsStr> = Vec::new();
     let cx: &OsStr = cross_runner.as_deref().unwrap_or(OsStr::new(""));
-    /* note: CROSS_TARGET_RUNNER is typically something like 'CROSS_TARGET_RUNNER=/linux-runner aarch64' */
+     
     for chunk in cx.as_encoded_bytes().split(|x| *x == b' ') {
         if !chunk.is_empty() {
             args.push(OsStr::from_bytes(chunk));
@@ -46,10 +46,10 @@ fn do_test(name: &str) -> ExitCode {
         }
         Ok(output) => output,
     };
-    /* Write with println! so Rust's test framework properly captures this */
+     
     println!("Test stdout ({} bytes):", output.stdout.len());
     println!("{}", String::from_utf8_lossy(&output.stdout));
-    /* test_proto is not expected to write anything to stderr; print it just in case */
+     
     println!("Test stderr ({} bytes):", output.stderr.len());
     println!("{}", String::from_utf8_lossy(&output.stderr));
 
