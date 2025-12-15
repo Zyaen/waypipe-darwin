@@ -15,6 +15,13 @@ application forwarding similar to [`ssh -X`][l1] feasible.
 [l0]: https://wayland.freedesktop.org/
 [l1]: https://wiki.archlinux.org/title/OpenSSH#X11_forwarding
 
+## 🚀 Quick Install (macOS)
+
+```bash
+brew tap J-x-Z/tap
+brew install waypipe-darwin
+```
+
 ## Usage
 
 `waypipe` should be installed on both the local and remote computers. There is a
@@ -42,17 +49,6 @@ kill %1
 ```
 
 For more detailed examples, see `waypipe`'s man page.
-
-## Installing
-
-### via Homebrew (Recommended for macOS)
-
-The easiest way to install Waypipe-Darwin is via our custom tap:
-
-```bash
-brew tap J-x-Z/tap
-brew install waypipe-darwin
-```
 
 ### Manual Build
 
