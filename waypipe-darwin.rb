@@ -12,7 +12,7 @@ class WaypipeDarwin < Formula
   conflicts_with "waypipe", because: "both install `waypipe` binaries"
 
   def install
-    system "cargo", "install", *std_cargo_args
+    system "cargo", "install", *std_cargo_args, "--no-default-features", "--features", "lz4,zstd"
   end
 
   test do
