@@ -45,6 +45,17 @@ For more detailed examples, see `waypipe`'s man page.
 
 ## Installing
 
+### via Homebrew (Recommended for macOS)
+
+The easiest way to install Waypipe-Darwin is via our custom tap:
+
+```bash
+brew tap J-x-Z/tap
+brew install waypipe-darwin
+```
+
+### Manual Build
+
 Waypipe's build uses a mixture of [meson][i0] and [cargo][i1]. For example:
 ```
 cd /path/to/waypipe/
