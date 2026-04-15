@@ -213,11 +213,10 @@ impl Mirror {
                 return None;
             }
         }
-        guard.ranges.insert(x);
-
         if x.1 > guard.region_size {
             return None;
         }
+        guard.ranges.insert(x);
         let len = x.1 - x.0;
         let start: isize = x.0.try_into().unwrap();
 
