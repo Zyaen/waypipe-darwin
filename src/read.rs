@@ -351,15 +351,7 @@ impl ReadBufferView {
 
      
     pub fn get(&self) -> &[u8] {
-        unsafe {
-             
-             
-             
-             
-             
-            let dst = std::ptr::slice_from_raw_parts_mut(self.data, self.data_len);
-            &mut *dst
-        }
+        unsafe { std::slice::from_raw_parts(self.data.cast_const(), self.data_len) }
     }
 
      
